@@ -41,7 +41,8 @@ async function fetchNav(projId) {
 
   for (let i = 0; i < maxDays; i++) {
     const date = dateStr(i);
-    const url = `https://api.sec.or.th/FundDailyInfo/${projId}/dailynav/${date}`;
+    // ปรับใช้ SEC API v2
+    const url = `https://api.sec.or.th/v2/fund/daily-info/nav?proj_id=${projId}&nav_date=${date}`;
 
     const res = await fetch(url, {
       headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
@@ -61,7 +62,10 @@ async function fetchNav(projId) {
     const text = await res.text();
     if (!text.trim()) continue;
     const raw = JSON.parse(text);
-    const item = Array.isArray(raw) ? raw[raw.length - 1] : raw;
+
+    // รองรับโครงสร้างข้อมูล API v2 (อยู่ใน raw.items)
+    const items = raw.items ?? (Array.isArray(raw) ? raw : []);
+    const item = items[items.length - 1] ?? items[0];
     if (!item) continue;
 
     const nav = item.last_val ?? item.nav ?? item.lastNav;
@@ -81,7 +85,6 @@ async function fetchNav(projId) {
 async function main() {
   const { data: funds, error } = await supabase.from('funds').select('code, proj_id');
   if (error) {
-    // error ของ Supabase เป็น object ธรรมดา ต้องแปลงเป็น Error เอง
     throw new Error(
       `Supabase query failed: ${error.message} (code: ${error.code ?? '-'}, hint: ${error.hint ?? '-'})`
     );
