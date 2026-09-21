@@ -2,24 +2,14 @@ import ws from 'ws';
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY; 
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY; // service_role key
 const SEC_API_KEY = process.env.SEC_API_KEY;
 
-// เพิ่มตัวเลือก transport: ws เข้าไปตอนสร้าง client เพื่อแก้ปัญหา WebSocket
+// สร้าง client พร้อมรองรับ WebSocket สำหรับ Node.js 20
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { persistSession: false },
   realtime: { transport: ws }
 });
-
-// scripts/update-nav.mjs
-// รันด้วย Node.js — ดึง NAV วันนี้ของทุกกองทุนในตาราง funds แล้วบันทึกลง Supabase
-import { createClient } from '@supabase/supabase-js';
-
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY; // service_role key
-const SEC_API_KEY = process.env.SEC_API_KEY;
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
@@ -33,8 +23,7 @@ async function fetchNav(projId) {
   );
   if (!res.ok) throw new Error(`SEC API error ${res.status} for ${projId}`);
   const data = await res.json();
-  // ⚠️ โครงสร้าง JSON จริงอาจเป็น array ของรายการ NAV ให้ log(data) ดูจริงก่อน แล้วปรับ mapping นี้ให้ตรง
-  // ตัวอย่างสมมติ (แก้ตามของจริง): [{ nav: 12.3456, nav_date: "2026-09-20" }]
+  
   const latest = Array.isArray(data) ? data[data.length - 1] : data;
   return { nav: latest.nav ?? latest.lastNav, navDate: latest.nav_date ?? latest.navDate ?? today };
 }
