@@ -1,3 +1,16 @@
+import ws from 'ws';
+import { createClient } from '@supabase/supabase-js';
+
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY; 
+const SEC_API_KEY = process.env.SEC_API_KEY;
+
+// เพิ่มตัวเลือก transport: ws เข้าไปตอนสร้าง client เพื่อแก้ปัญหา WebSocket
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+  auth: { persistSession: false },
+  realtime: { transport: ws }
+});
+
 // scripts/update-nav.mjs
 // รันด้วย Node.js — ดึง NAV วันนี้ของทุกกองทุนในตาราง funds แล้วบันทึกลง Supabase
 import { createClient } from '@supabase/supabase-js';
