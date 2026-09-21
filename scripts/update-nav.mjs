@@ -1,7 +1,15 @@
 import ws from 'ws';
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = process.env.SUPABASE_URL?.trim();
+const SUPABASE_URL = (() => {
+  const raw = process.env.SUPABASE_URL?.trim();
+  if (!raw) return raw;
+  try {
+    return new URL(raw).origin; // เหลือแค่ https://xxxx.supabase.co
+  } catch {
+    return raw;
+  }
+})();
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY?.trim(); // service_role key
 const SEC_API_KEY = process.env.SEC_API_KEY?.trim();
 
@@ -28,32 +36,46 @@ function dateStr(offsetDays = 0) {
 }
 
 async function fetchNav(projId) {
-  const to = dateStr(0);
-  const from = dateStr(7); // ย้อนหลัง 7 วัน เผื่อวันนี้ยังไม่ประกาศ NAV / วันหยุด
-  const url = `https://api.sec.or.th/FundDailyInfo/${projId}/dailynav/${from}/${to}`;
+  let notFoundCount = 0;
+  const maxDays = 7; // ย้อนหลังสูงสุด 7 วัน เผื่อวันนี้ยังไม่ประกาศ NAV / วันหยุด
 
-  const res = await fetch(url, {
-    headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`SEC API error ${res.status} for ${projId} ${body.slice(0, 200)}`);
+  for (let i = 0; i < maxDays; i++) {
+    const date = dateStr(i);
+    const url = `https://api.sec.or.th/FundDailyInfo/${projId}/dailynav/${date}`;
+
+    const res = await fetch(url, {
+      headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
+    });
+
+    // 204 / 404 = วันนั้นไม่มีข้อมูล (วันหยุด หรือยังไม่ประกาศ) ลองวันก่อนหน้า
+    if (res.status === 204) continue;
+    if (res.status === 404) {
+      notFoundCount++;
+      continue;
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`SEC API error ${res.status} for ${projId} ${body.slice(0, 200)}`);
+    }
+
+    const text = await res.text();
+    if (!text.trim()) continue;
+    const raw = JSON.parse(text);
+    const item = Array.isArray(raw) ? raw[raw.length - 1] : raw;
+    if (!item) continue;
+
+    const nav = item.last_val ?? item.nav ?? item.lastNav;
+    if (nav === undefined || nav === null) continue;
+
+    return { nav, navDate: item.nav_date ?? item.navDate ?? date };
   }
 
-  const raw = await res.json();
-  const list = (Array.isArray(raw) ? raw : [raw]).filter(Boolean);
-  if (list.length === 0) return null;
-
-  // เรียงตามวันที่ แล้วเอาตัวล่าสุด
-  const rows = list
-    .map((r) => ({
-      nav: r.nav ?? r.lastNav ?? r.last_val,
-      navDate: r.nav_date ?? r.navDate ?? to,
-    }))
-    .filter((r) => r.nav !== undefined && r.nav !== null)
-    .sort((a, b) => String(a.navDate).localeCompare(String(b.navDate)));
-
-  return rows.length ? rows[rows.length - 1] : null;
+  if (notFoundCount === maxDays) {
+    throw new Error(
+      `SEC API ตอบ 404 ทุกวันสำหรับ ${projId} ให้เช็ค proj_id ในตาราง funds หรือ URL ของ endpoint`
+    );
+  }
+  return null;
 }
 
 async function main() {
