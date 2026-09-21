@@ -5,81 +5,55 @@ const SUPABASE_URL = (() => {
   const raw = process.env.SUPABASE_URL?.trim();
   if (!raw) return raw;
   try {
-    return new URL(raw).origin; // เหลือแค่ https://xxxx.supabase.co
+    return new URL(raw).origin;
   } catch {
     return raw;
   }
 })();
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY?.trim(); // service_role key
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY?.trim();
 const SEC_API_KEY = process.env.SEC_API_KEY?.trim();
 
-// ตรวจ env ก่อนเริ่ม จะได้รู้ทันทีว่า secret ขาดตัวไหน
+// ตรวจ env ก่อนเริ่ม
 const missing = Object.entries({ SUPABASE_URL, SUPABASE_SERVICE_KEY, SEC_API_KEY })
   .filter(([, v]) => !v)
   .map(([k]) => k);
 if (missing.length) {
   console.error(`ไม่พบ environment variable: ${missing.join(', ')}`);
-  console.error('เช็คว่าตั้ง secrets ใน GitHub และส่งผ่าน env ใน workflow ครบแล้ว');
   process.exit(1);
 }
 
-// สร้าง client พร้อมรองรับ WebSocket สำหรับ Node.js 20
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { persistSession: false },
   realtime: { transport: ws },
 });
 
-// วันที่ตามเวลาไทย (UTC+7) รูปแบบ YYYY-MM-DD
-function dateStr(offsetDays = 0) {
-  const ms = Date.now() + 7 * 3600 * 1000 - offsetDays * 24 * 3600 * 1000;
-  return new Date(ms).toISOString().slice(0, 10);
-}
-
 async function fetchNav(projId) {
-  let notFoundCount = 0;
-  const maxDays = 7; // ย้อนหลังสูงสุด 7 วัน เผื่อวันนี้ยังไม่ประกาศ NAV / วันหยุด
+  // ส่งแค่ proj_id API v2 จะส่งข้อมูล NAV วันล่าสุดกลับมาให้อัตโนมัติ
+  const url = `https://api.sec.or.th/v2/fund/daily-info/nav?proj_id=${projId}`;
 
-  for (let i = 0; i < maxDays; i++) {
-    const date = dateStr(i);
-    // ปรับใช้ SEC API v2
-    const url = `https://api.sec.or.th/v2/fund/daily-info/nav?proj_id=${projId}&nav_date=${date}`;
+  const res = await fetch(url, {
+    headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
+  });
 
-    const res = await fetch(url, {
-      headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
-    });
+  if (res.status === 204 || res.status === 404) return null;
 
-    // 204 / 404 = วันนั้นไม่มีข้อมูล (วันหยุด หรือยังไม่ประกาศ) ลองวันก่อนหน้า
-    if (res.status === 204) continue;
-    if (res.status === 404) {
-      notFoundCount++;
-      continue;
-    }
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`SEC API error ${res.status} for ${projId} ${body.slice(0, 200)}`);
-    }
-
-    const text = await res.text();
-    if (!text.trim()) continue;
-    const raw = JSON.parse(text);
-
-    // รองรับโครงสร้างข้อมูล API v2 (อยู่ใน raw.items)
-    const items = raw.items ?? (Array.isArray(raw) ? raw : []);
-    const item = items[items.length - 1] ?? items[0];
-    if (!item) continue;
-
-    const nav = item.last_val ?? item.nav ?? item.lastNav;
-    if (nav === undefined || nav === null) continue;
-
-    return { nav, navDate: item.nav_date ?? item.navDate ?? date };
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`SEC API error ${res.status} for ${projId} ${body.slice(0, 200)}`);
   }
 
-  if (notFoundCount === maxDays) {
-    throw new Error(
-      `SEC API ตอบ 404 ทุกวันสำหรับ ${projId} ให้เช็ค proj_id ในตาราง funds หรือ URL ของ endpoint`
-    );
-  }
-  return null;
+  const text = await res.text();
+  if (!text.trim()) return null;
+
+  const raw = JSON.parse(text);
+  const items = raw.items ?? (Array.isArray(raw) ? raw : []);
+  const item = items[items.length - 1] ?? items[0];
+  if (!item) return null;
+
+  const nav = item.last_val ?? item.nav ?? item.lastNav;
+  if (nav === undefined || nav === null) return null;
+
+  return { nav, navDate: item.nav_date ?? item.navDate };
 }
 
 async function main() {
@@ -131,6 +105,5 @@ async function main() {
 
 main().catch((err) => {
   console.error('Script failed:', err?.message ?? err);
-  if (!(err instanceof Error)) console.error(JSON.stringify(err, null, 2));
   process.exit(1);
 });
