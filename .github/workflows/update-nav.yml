@@ -1,35 +1,35 @@
 name: Update Daily NAV
 
 on:
+  workflow_dispatch: {}
   schedule:
     - cron: '0 11 * * 1-5'
-  workflow_dispatch: {}
 
 jobs:
   update-nav:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - run: npm install
-      - run: node scripts/update-nav.mjs
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install ws @supabase/supabase-js
+
+      - name: Sync Funds List from SEC
+        run: node scripts/sync-funds.mjs
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
 
-  name: Sync Funds List from SEC
-  run: node scripts/sync-funds.mjs
-  env:
-    SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-    SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-    SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
-
-  name: Update Daily NAV
-  run: node scripts/update-nav.mjs
-  env:
-    SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-    SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-    SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
+      - name: Run Update NAV Script
+        run: node scripts/update-nav.mjs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
