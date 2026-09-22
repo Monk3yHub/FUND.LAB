@@ -15,81 +15,69 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   realtime: { transport: ws },
 });
 
-// รายชื่อรหัส บลจ. (AMC ID) หลักในประเทศไทย
-const AMC_IDS = [
-  'C0000000021', // กสิกรไทย (KAsset)
-  'C0000000023', // ไทยพาณิชย์ (SCBAM)
-  'C0000000025', // บัวหลวง (BBLAM)
-  'C0000000020', // กรุงศรี (KSAM)
-  'C0000000007', // กรุงไทย (KTAM)
-  'C0000000001', // ทหารไทยธนชาต (ttb)
-  'C0000000018', // ยูโอบี (UOBAM)
-  'C0000000022', // พรินซิเพิล (Principal)
-  'C0000000012', // วรรณ (ONEAM)
-  'C0000000009', // แลนด์ แอนด์ เฮ้าส์ (LHAM)
-  'C0000000028', // อีสท์สปริง (Eastspring)
-  'C0000000002', // แอสเซท พลัส (Asset Plus)
-  'C0000000015', // ดาโอ (DAOL)
-  'C0000000026', // ทิสโก้ (TISCO)
-  'C0000000008', // เกียรตินาคินภัทร (KKP)
-  'C0000000019', // ฟิลลิป (Phillip)
-  'C0000000004', // เอ็มเอฟซี / เมอร์ชั่น (MFC)
-];
-
 async function syncAllFunds() {
-  console.log('เริ่มดึงรายชื่อกองทุนแยกตาม บลจ. จาก SEC API v2...');
+  console.log('1. กำลังดึงรายชื่อ บลจ. ทั้งหมดจาก SEC API (/v2/fund/general-info/amcs)...');
 
-  const allFundsMap = new Map();
+  // 1. ดึงรายชื่อ บลจ. จาก Endpoint amcs
+  const amcUrl = 'https://api.sec.or.th/v2/fund/general-info/amcs';
+  const amcRes = await fetch(amcUrl, {
+    headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
+  });
 
-  for (const amcId of AMC_IDS) {
-    try {
-      const url = `https://api.sec.or.th/v2/fund/general-info/profiles?amc_id=${amcId}`;
-      const res = await fetch(url, {
-        headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
+  if (!amcRes.ok) {
+    const errText = await amcRes.text().catch(() => '');
+    throw new Error(`ดึงข้อมูล AMCs ไม่สำเร็จ Status: ${amcRes.status} - ${errText.slice(0, 100)}`);
+  }
+
+  const amcs = await amcRes.json();
+  const amcList = Array.isArray(amcs) ? amcs : (amcs.items ?? amcs.data ?? []);
+  console.log(`พบ บลจ. ในระบบทั้งหมด ${amcList.length} แห่ง`);
+
+  if (amcList.length > 0) {
+    console.log('ตัวอย่างข้อมูล บลจ. แรก:', JSON.stringify(amcList[0]));
+  }
+
+  // 2. ดึงข้อมูลโปรไฟล์กองทุนจาก Endpoint profiles
+  console.log('\n2. กำลังดึงข้อมูลโปรไฟล์กองทุนจาก SEC API (/v2/fund/general-info/profiles)...');
+  const profilesUrl = 'https://api.sec.or.th/v2/fund/general-info/profiles';
+  const profRes = await fetch(profilesUrl, {
+    headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
+  });
+
+  if (!profRes.ok) {
+    const errText = await profRes.text().catch(() => '');
+    throw new Error(`ดึง Profiles ไม่สำเร็จ Status: ${profRes.status} - ${errText.slice(0, 100)}`);
+  }
+
+  const rawProfiles = await profRes.json();
+  const items = Array.isArray(rawProfiles) ? rawProfiles : (rawProfiles.items ?? rawProfiles.data ?? []);
+
+  console.log(`ดึงข้อมูลกองทุนได้ทั้งหมด ${items.length} รายการ`);
+
+  const uniqueFundsMap = new Map();
+
+  items.forEach((item, idx) => {
+    const projId = item.proj_id || item.proj_code || item.unique_id;
+    if (!projId) return;
+
+    const rawCode = item.proj_abbr_name || item.unique_id || item.proj_id || item.sym_code || `FUND_${idx}`;
+    const code = String(rawCode).trim();
+    const rawName = item.proj_name_th || item.proj_name_en || item.proj_abbr_name || code;
+    const name = String(rawName).trim();
+
+    if (!uniqueFundsMap.has(code)) {
+      uniqueFundsMap.set(code, {
+        proj_id: String(projId).trim(),
+        code: code,
+        name: name,
       });
-
-      if (!res.ok) {
-        console.warn(`ดึงข้อมูล บลจ. ${amcId} ไม่สำเร็จ Status: ${res.status}`);
-        continue;
-      }
-
-      const raw = await res.json();
-      const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
-
-      let count = 0;
-      items.forEach((item, idx) => {
-        const projId = item.proj_id || item.proj_code || item.unique_id;
-        if (!projId) return;
-
-        const rawCode = item.proj_abbr_name || item.unique_id || item.proj_id || item.sym_code || `FUND_${amcId}_${idx}`;
-        const code = String(rawCode).trim();
-        const rawName = item.proj_name_th || item.proj_name_en || item.proj_abbr_name || code;
-        const name = String(rawName).trim();
-
-        if (!allFundsMap.has(code)) {
-          allFundsMap.set(code, {
-            proj_id: String(projId).trim(),
-            code: code,
-            name: name,
-          });
-          count++;
-        }
-      });
-
-      console.log(`บลจ. ${amcId}: ดึงเพิ่มได้ ${count} กองทุน`);
-    } catch (err) {
-      console.error(`เกิดข้อผิดพลาดในการดึง บลจ. ${amcId}:`, err.message);
     }
-  }
+  });
 
-  const uniqueFunds = Array.from(allFundsMap.values());
-  console.log(`\nรวบรวมกองทุนทั้งหมดได้รวม: ${uniqueFunds.length} รายการ`);
+  const uniqueFunds = Array.from(uniqueFundsMap.values());
+  console.log(`คัดกรองเตรียมบันทึกลง Supabase: ${uniqueFunds.length} รายการ`);
 
-  if (uniqueFunds.length === 0) {
-    throw new Error('ไม่พบข้อมูลกองทุนจาก SEC API');
-  }
-
-  // บันทึกลง Supabase แบบ Batch Insert
+  // 3. บันทึกลง Supabase
   const chunkSize = 200;
   let insertedCount = 0;
 
@@ -106,7 +94,7 @@ async function syncAllFunds() {
     }
   }
 
-  console.log(`บันทึกรายชื่อกองทุนลง Supabase สำเร็จทั้งหมด ${insertedCount} กองทุน!`);
+  console.log(`\nบันทึกรายชื่อกองทุนลง Supabase เรียบร้อยแล้วทั้งหมด ${insertedCount} กองทุน!`);
 }
 
 syncAllFunds().catch((err) => {
