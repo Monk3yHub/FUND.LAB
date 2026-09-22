@@ -16,12 +16,13 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
 });
 
 async function syncAllFunds() {
-  console.log('กำลังดึงรายชื่อกองทุนทั้งหมดจาก SEC API v2 (daily-info/nav)...');
+  console.log('กำลังดึงรายชื่อกองทุนจาก SEC API...');
 
-  // ดึงจาก daily-info/nav เพื่อรับรายชื่อกองทุนแอคทีฟทั้งหมดในครั้งเดียว
-  const url = 'https://api.sec.or.th/v2/fund/daily-info/nav';
-
-  const res = await fetch(url, {
+  let allItems = [];
+  
+  // 1. ดึงข้อมูลหน้าแรก
+  const baseUrl = 'https://api.sec.or.th/v2/fund/general-info/profiles';
+  const res = await fetch(baseUrl, {
     headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
   });
 
@@ -32,35 +33,48 @@ async function syncAllFunds() {
 
   const raw = await res.json();
   const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
+  allItems = items;
 
-  console.log(`พบข้อมูลจาก SEC API ทั้งหมด ${items.length} รายการ`);
+  console.log(`ดึงข้อมูลตั้งต้นได้ ${allItems.length} รายการจาก SEC API`);
 
-  if (items.length === 0) {
+  if (allItems.length === 0) {
     throw new Error('ไม่พบข้อมูลกองทุนส่งกลับมาจาก SEC API');
   }
 
-  // แปลงข้อมูลให้อยู่ในโครงสร้างตาราง funds (code, proj_id, name)
-  const fundsToInsert = items
-    .map((item) => {
-      const projId = item.proj_id;
-      const code = (item.unique_id || item.proj_abbr_name || item.proj_id)?.trim();
-      const name = (item.proj_name_th || item.proj_name_en || code)?.trim();
+  // พิมพ์โครงสร้างข้อมูลตัวอย่างใน Log เพื่อให้ตรวจสอบย้อนหลังได้ง่าย
+  console.log('ตัวอย่างโครงสร้างข้อมูลจาก SEC:', JSON.stringify(allItems[0]));
 
-      return {
-        proj_id: projId,
-        code: code,
-        name: name,
-      };
-    })
-    .filter((f) => f.proj_id && f.code && f.name);
+  // 2. แปลงข้อมูลและป้องกันค่า undefined ไม่ให้ข้อมูลซ้ำจนถูกลบเหลือ 1 รายการ
+  const fundsToInsert = allItems.map((item, index) => {
+    const projId = item.proj_id || item.proj_code || `PROJ_${index}`;
+    
+    // ดึงรหัสกองทุน โดยไล่ตามลำดับฟิลด์ที่มีโอกาสเกิดขึ้นได้
+    const rawCode = item.proj_abbr_name || item.unique_id || item.sym_code || item.proj_id || item.proj_code;
+    const code = rawCode ? String(rawCode).trim() : `FUND_${projId}`;
 
-  // ลบรายการที่ code ซ้ำกัน
-  const uniqueFunds = Array.from(
-    new Map(fundsToInsert.map((f) => [f.code, f])).values()
-  );
+    // ดึงชื่อกองทุน
+    const rawName = item.proj_name_th || item.proj_name_en || item.proj_abbr_name || code;
+    const name = String(rawName).trim();
 
-  console.log(`กำลังบันทึกกองทุนจำนวน ${uniqueFunds.length} รายการ ลง Supabase...`);
+    return {
+      proj_id: String(projId).trim(),
+      code: code,
+      name: name,
+    };
+  });
 
+  // 3. กรองเฉพาะรายการที่ไม่ซ้ำตาม code
+  const uniqueFundsMap = new Map();
+  for (const fund of fundsToInsert) {
+    if (fund.code && !uniqueFundsMap.has(fund.code)) {
+      uniqueFundsMap.set(fund.code, fund);
+    }
+  }
+
+  const uniqueFunds = Array.from(uniqueFundsMap.values());
+  console.log(`คัดกรองได้กองทุนที่ไม่ซ้ำกันจำนวนทั้งหมด ${uniqueFunds.length} รายการ`);
+
+  // 4. บันทึกลง Supabase แบบ Batch Insert
   const chunkSize = 200;
   let insertedCount = 0;
 
@@ -71,13 +85,13 @@ async function syncAllFunds() {
       .upsert(chunk, { onConflict: 'code' });
 
     if (error) {
-      console.error(`เกิดข้อผิดพลาดชุดที่ ${i}:`, error.message);
+      console.error(`เกิดข้อผิดพลาดในการบันทึกชุดที่ ${i}:`, error.message);
     } else {
       insertedCount += chunk.length;
     }
   }
 
-  console.log(`บันทึกรายชื่อกองทุนเรียบร้อยแล้วทั้งหมด ${insertedCount} กองทุน!`);
+  console.log(`บันทึกสำเร็จลง Supabase ทั้งหมด ${insertedCount} กองทุน!`);
 }
 
 syncAllFunds().catch((err) => {
