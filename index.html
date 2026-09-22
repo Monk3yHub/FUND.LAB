@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fund Portfolio Challenge</title>
+<style>
+  :root{ --bg:#f6f7fb; --card:#fff; --text:#1a1d29; --sub:#6b7280; --accent:#5b5bd6; --accent2:#00b894; --danger:#e74c3c; --border:#e5e7eb; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans Thai",sans-serif;}
+  header{position:sticky;top:0;z-index:10;background:var(--accent);color:#fff;padding:16px;}
+  header h1{margin:0;font-size:17px;}
+  main{max-width:520px;margin:0 auto;padding:14px;padding-bottom:60px;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px;}
+  .tabs{display:flex;gap:6px;padding:10px 12px 0;background:var(--accent);}
+  .tab{flex:1;text-align:center;padding:9px 6px;border-radius:10px 10px 0 0;font-size:13px;font-weight:600;color:#fff;background:rgba(255,255,255,.12);cursor:pointer;}
+  .tab.active{background:var(--bg);color:var(--accent);}
+  input[type=number]{width:90px;padding:6px;border-radius:8px;border:1px solid var(--border);text-align:right;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th,td{text-align:left;padding:7px 4px;border-bottom:1px solid var(--border);}
+  .right{text-align:right;}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 14px;font-size:13px;font-weight:600;cursor:pointer;}
+  .btn.small{padding:6px 9px;font-size:12px;background:var(--danger);}
+  .fund-item{display:flex;justify-content:space-between;align-items:center;padding:9px 4px;border-bottom:1px solid var(--border);font-size:13px;}
+  .rank-row{display:flex;justify-content:space-between;padding:9px 4px;border-bottom:1px solid var(--border);font-size:13px;}
+  .you{background:rgba(91,91,214,.08);border-radius:8px;}
+  .balance{font-size:22px;font-weight:800;}
+  .loading{color:var(--sub);text-align:center;padding:20px;}
+</style>
+</head>
+<body>
+<header>
+  <h1>🏆 Fund Portfolio Challenge</h1>
+  <p id="whoami" style="margin:4px 0 0;font-size:12px;opacity:.85;">กำลังเข้าสู่ระบบผ่าน LINE...</p>
+</header>
+<div class="tabs">
+  <div class="tab active" data-tab="build">จัดพอร์ต</div>
+  <div class="tab" data-tab="board">อันดับ</div>
+</div>
+<main>
+  <section id="tab-build">
+    <div class="card">
+      <h2 style="font-size:14px;">เลือกกองทุน</h2>
+      <input type="text" id="search" placeholder="พิมพ์รหัสกองทุน" style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);">
+      <div id="fundList" style="margin-top:8px;max-height:220px;overflow-y:auto;"></div>
+    </div>
+    <div class="card">
+      <h2 style="font-size:14px;">พอร์ตของฉัน (วงเงิน 1,000,000 บาท)</h2>
+      <table><thead><tr><th>กองทุน</th><th class="right">จำนวนเงิน</th><th></th></tr></thead>
+      <tbody id="portfolioBody"></tbody></table>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
+        <div><div style="font-size:11px;color:var(--sub);">คงเหลือ</div><div class="balance" id="balance">1,000,000</div></div>
+        <button class="btn" id="submitBtn">✅ ยืนยันพอร์ต</button>
+      </div>
+    </div>
+  </section>
+  <section id="tab-board" style="display:none;">
+    <div class="card"><div id="leaderboard" class="loading">กำลังโหลด...</div></div>
+  </section>
+</main>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+// ============ 3 ค่าที่ต้องแก้เป็นของจริง ============
+const LIFF_ID = "YOUR_LIFF_ID";                       // จากขั้น 4.2
+const SUPABASE_URL = "https://YOUR_PROJECT.supabase.co"; // จาก Supabase > Settings > API
+const SUPABASE_ANON_KEY = "YOUR_ANON_OR_PUBLISHABLE_KEY"; // anon/publishable key เท่านั้น ห้ามใช้ service key
+// ====================================================
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const START_CASH = 1000000;
+const RISK_FREE = 0.015;
+
+let lineUserId = null, nickname = "";
+let FUNDS = [];             // [{code,name,nav}]
+let portfolio = {};         // code -> amount
+let players = [];           // [{line_user_id, nickname, holdings:[{fund_code,amount}]}]
+
+function fmt(n){ return Math.round(n).toLocaleString('en-US'); }
+function pct(n){ return (n*100).toFixed(2)+"%"; }
+
+async function boot(){
+  await liff.init({ liffId: LIFF_ID });
+  if(!liff.isLoggedIn()){ liff.login(); return; }
+
+  const profile = await liff.getProfile();
+  lineUserId = profile.userId;
+  nickname = profile.displayName;
+  document.getElementById('whoami').textContent = "สวัสดีคุณ " + nickname;
+
+  await supabase.from('players').upsert(
+    { line_user_id: lineUserId, nickname },
+    { onConflict: 'line_user_id' }
+  );
+
+  await loadFunds();
+  await loadPortfolio();
+  await loadLeaderboard();
+}
+
+// ---------- Funds + latest NAV ----------
+async function loadFunds(){
+  const { data: funds } = await supabase.from('funds').select('code,name');
+  const { data: navs } = await supabase.from('latest_nav').select('fund_code,nav');
+  const navMap = Object.fromEntries((navs||[]).map(n=>[n.fund_code, n.nav]));
+  FUNDS = (funds||[]).map(f => ({ code:f.code, name:f.name, nav: navMap[f.code] ?? null }));
+  renderFundList();
+}
+
+function renderFundList(filter=""){
+  const list = document.getElementById('fundList');
+  const f = filter.trim().toUpperCase();
+  const matches = FUNDS.filter(x => x.code.toUpperCase().startsWith(f) || x.name.toUpperCase().includes(f));
+  list.innerHTML = matches.map(fund => `
+    <div class="fund-item">
+      <div><b>${fund.code}</b> · NAV ${fund.nav ?? '-'}<br><span style="color:var(--sub);font-size:11px;">${fund.name}</span></div>
+      <button class="btn small" style="background:var(--accent)" data-add="${fund.code}">+ เพิ่ม</button>
+    </div>`).join('') || '<div class="loading">ไม่พบกองทุน</div>';
+  list.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { portfolio[b.dataset.add] ??= 0; renderPortfolio(); });
+}
+document.getElementById('search').oninput = e => renderFundList(e.target.value);
+
+// ---------- Portfolio builder ----------
+async function loadPortfolio(){
+  const { data } = await supabase.from('holdings').select('fund_code,amount').eq('player_line_user_id', lineUserId);
+  portfolio = Object.fromEntries((data||[]).map(h => [h.fund_code, h.amount]));
+  renderPortfolio();
+}
+
+function renderPortfolio(){
+  const body = document.getElementById('portfolioBody');
+  body.innerHTML = Object.keys(portfolio).map(code => `
+    <tr>
+      <td>${code}</td>
+      <td class="right"><input type="number" min="0" step="1000" value="${portfolio[code]}" data-amt="${code}"></td>
+      <td class="right"><button class="btn small" data-del="${code}">×</button></td>
+    </tr>`).join('');
+  body.querySelectorAll('[data-amt]').forEach(inp => inp.oninput = () => { portfolio[inp.dataset.amt] = Number(inp.value)||0; updateBalance(); });
+  body.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { delete portfolio[b.dataset.del]; renderPortfolio(); });
+  updateBalance();
+}
+
+function updateBalance(){
+  const used = Object.values(portfolio).reduce((s,a)=>s+a,0);
+  const el = document.getElementById('balance');
+  el.textContent = fmt(START_CASH - used);
+  el.style.color = (START_CASH - used) < 0 ? 'var(--danger)' : '';
+}
+
+document.getElementById('submitBtn').onclick = async () => {
+  const used = Object.values(portfolio).reduce((s,a)=>s+a,0);
+  if(used === 0 || used > START_CASH){ alert("เช็ควงเงินให้ถูกต้องก่อน (0 < ยอดรวม ≤ 1,000,000)"); return; }
+
+  // ลบพอร์ตเก่าของ user นี้ทั้งหมด แล้วค่อยเขียนพอร์ตใหม่ทั้งชุด (ง่ายกว่าการ diff ทีละแถว)
+  await supabase.from('holdings').delete().eq('player_line_user_id', lineUserId);
+  // บันทึก "หน่วย" ที่ซื้อได้จาก NAV ณ วันนี้ (amount / nav) เพื่อใช้คำนวณมูลค่าพอร์ตวันหลังให้แม่นยำ
+  const navMap = Object.fromEntries(FUNDS.map(f => [f.code, f.nav]));
+  const rows = Object.entries(portfolio)
+    .filter(([, amt]) => amt > 0)
+    .map(([code, amt]) => ({
+      player_line_user_id: lineUserId,
+      fund_code: code,
+      amount: amt,
+      units: navMap[code] ? amt / navMap[code] : 0,
+    }));
+  const { error } = await supabase.from('holdings').insert(rows);
+  if(error){ alert("บันทึกไม่สำเร็จ: " + error.message); return; }
+  alert("บันทึกพอร์ตเรียบร้อย!");
+  loadLeaderboard();
+};
+
+// ---------- Leaderboard ----------
+async function loadLeaderboard(){
+  const box = document.getElementById('leaderboard');
+  box.innerHTML = '<div class="loading">กำลังโหลด...</div>';
+
+  const [{ data: allPlayers }, { data: allHoldings }, { data: navs }] = await Promise.all([
+    supabase.from('players').select('line_user_id,nickname'),
+    supabase.from('holdings').select('player_line_user_id,fund_code,amount,units'),
+    supabase.from('latest_nav').select('fund_code,nav'),
+  ]);
+  const navMap = Object.fromEntries((navs||[]).map(n=>[n.fund_code, n.nav]));
+
+  const rows = (allPlayers||[]).map(p => {
+    const holdings = (allHoldings||[]).filter(h => h.player_line_user_id === p.line_user_id);
+    if(holdings.length===0) return null;
+    let invested = 0, current = 0;
+    holdings.forEach(h => {
+      invested += h.amount;
+      const nav = navMap[h.fund_code];
+      current += nav ? h.units * nav : h.amount; // ถ้ายังไม่มี NAV วันนี้ ใช้ทุนเดิมไปก่อน
+    });
+    const ret = invested ? (current - invested) / invested : 0;
+    return { name: p.nickname, ret, invested, current };
+  }).filter(Boolean).sort((a,b) => b.ret - a.ret);
+
+  box.innerHTML = rows.length ? rows.map((r,i) => `
+    <div class="rank-row ${r.name===nickname?'you':''}">
+      <div>${i+1}. <b>${r.name}</b></div>
+      <div>ผลตอบแทน <b>${pct(r.ret)}</b></div>
+    </div>`).join('') : '<div class="loading">ยังไม่มีผู้เล่นส่งพอร์ต</div>';
+}
+
+// ---------- Tabs ----------
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const name = tab.dataset.tab;
+    document.getElementById('tab-build').style.display = name==='build' ? '' : 'none';
+    document.getElementById('tab-board').style.display = name==='board' ? '' : 'none';
+    if(name==='board') loadLeaderboard();
+  };
+});
+
+boot();
+</script>
+</body>
+</html>
