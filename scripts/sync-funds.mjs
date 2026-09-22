@@ -16,93 +16,55 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
 });
 
 async function syncAllFunds() {
-  console.log('เริ่มดึงรายชื่อกองทุนทั้งหมดจาก SEC API v2 (แบบรันวนลูปทุกหน้า)...');
+  console.log('กำลังดึงรายชื่อกองทุนจาก SEC API v2...');
 
-  let allItems = [];
-  let page = 1;
-  let hasMore = true;
-  const seenIds = new Set();
+  // ห้ามใส่ query parameter เช่น ?page=1 เพราะ SEC API v2 จะตอบกลับเป็น Error 400
+  const url = 'https://api.sec.or.th/v2/fund/general-info/profiles';
 
-  // วนลูปดึงข้อมูลทีละหน้าจนกว่าจะไม่พบข้อมูลใหม่
-  while (hasMore && page <= 100) { // กำหนดเพดานป้องกัน Infinite Loop ไว้ที่ 100 หน้า
-    const url = `https://api.sec.or.th/v2/fund/general-info/profiles?page=${page}`;
-    console.log(`กำลังดึงข้อมูลหน้า ${page}...`);
+  const res = await fetch(url, {
+    headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
+  });
 
-    const res = await fetch(url, {
-      headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
-    });
-
-    if (!res.ok) {
-      const errorText = await res.text().catch(() => '');
-      console.warn(`หน้า ${page} เกิดข้อผิดพลาด ${res.status}: ${errorText.slice(0, 100)}`);
-      break;
-    }
-
-    const raw = await res.json();
-    const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
-
-    if (items.length === 0) {
-      console.log(`หน้า ${page} ไม่พบข้อมูลเพิ่มเติม สิ้นสุดการดึงข้อมูล`);
-      break;
-    }
-
-    let newCountOnPage = 0;
-    for (const item of items) {
-      const uniqueId = item.unique_id || item.proj_id;
-      if (uniqueId && !seenIds.has(uniqueId)) {
-        seenIds.add(uniqueId);
-        allItems.push(item);
-        newCountOnPage++;
-      }
-    }
-
-    console.log(`หน้า ${page}: ดึงได้ ${items.length} รายการ (พบรายการใหม่ ${newCountOnPage} รายการ)`);
-
-    // ถ้าหน้านั้นไม่มีรายการใหม่เลย แสดงว่าข้อมูลเริ่มซ้ำ ให้หยุดวนลูป
-    if (newCountOnPage === 0) {
-      console.log('ไม่พบรายการใหม่เพิ่มแล้ว สิ้นสุดการวนลูป');
-      break;
-    }
-
-    // ถ้าข้อมูลได้ไม่ถึง 100 แสดงว่าเป็นหน้าสุดท้าย
-    if (items.length < 100) {
-      hasMore = false;
-    } else {
-      page++;
-    }
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(`SEC API Error status: ${res.status} - ${errorText.slice(0, 150)}`);
   }
 
-  console.log(`\nรวบรวมข้อมูลกองทุนทั้งหมดสำเร็จได้: ${allItems.length} รายการ`);
+  const raw = await res.json();
+  const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
 
-  if (allItems.length === 0) {
+  console.log(`พบข้อมูลตั้งต้นจาก SEC API ทั้งหมด ${items.length} รายการ`);
+
+  if (items.length === 0) {
     throw new Error('ไม่พบข้อมูลกองทุนส่งกลับมาจาก SEC API');
   }
 
-  // แปลงข้อมูลเข้าตาราง funds
-  const fundsToInsert = allItems.map((item, index) => {
-    const projId = item.proj_id || `PROJ_${index}`;
-    const code = (item.proj_abbr_name || item.unique_id || item.proj_id)?.trim();
-    const name = (item.proj_name_th || item.proj_name_en || code)?.trim();
+  // แปลงข้อมูลและกำหนด Fallback ป้องกันค่า undefined ซ้ำกันจนถูกยุบเหลือ 1 รายการ
+  const uniqueFundsMap = new Map();
 
-    return {
-      proj_id: String(projId).trim(),
-      code: String(code).trim(),
-      name: String(name).trim(),
-    };
+  items.forEach((item, idx) => {
+    const projId = item.proj_id || item.proj_code || item.unique_id;
+    if (!projId) return;
+
+    const rawCode = item.proj_abbr_name || item.unique_id || item.proj_id || item.sym_code || `FUND_${idx}`;
+    const code = String(rawCode).trim();
+    
+    const rawName = item.proj_name_th || item.proj_name_en || item.proj_abbr_name || code;
+    const name = String(rawName).trim();
+
+    if (!uniqueFundsMap.has(code)) {
+      uniqueFundsMap.set(code, {
+        proj_id: String(projId).trim(),
+        code: code,
+        name: name,
+      });
+    }
   });
 
-  // กรองเฉพาะรายการที่ไม่ซ้ำตาม code
-  const uniqueFundsMap = new Map();
-  for (const fund of fundsToInsert) {
-    if (fund.code && !uniqueFundsMap.has(fund.code)) {
-      uniqueFundsMap.set(fund.code, fund);
-    }
-  }
-
   const uniqueFunds = Array.from(uniqueFundsMap.values());
-  console.log(`คัดกรองเหลือรหัสกองทุนที่ไม่ซ้ำกัน: ${uniqueFunds.length} รายการ`);
+  console.log(`คัดกรองรายชื่อกองทุนพร้อมบันทึกจำนวน ${uniqueFunds.length} รายการ...`);
 
-  // บันทึกลง Supabase แบบ Batch Upsert
+  // บันทึกลง Supabase แบบ Batch Insert (ครั้งละ 200 รายการ)
   const chunkSize = 200;
   let insertedCount = 0;
 
@@ -119,7 +81,7 @@ async function syncAllFunds() {
     }
   }
 
-  console.log(`บันทึกรายชื่อกองทุนทั้งหมดลง Supabase สำเร็จเรียบร้อย ${insertedCount} กองทุน!`);
+  console.log(`บันทึกรายชื่อกองทุนลง Supabase เรียบร้อยแล้วทั้งหมด ${insertedCount} กองทุน!`);
 }
 
 syncAllFunds().catch((err) => {
