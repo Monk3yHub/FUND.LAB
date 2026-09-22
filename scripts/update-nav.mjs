@@ -15,106 +15,146 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   realtime: { transport: ws },
 });
 
-// ฟังก์ชันยิงขอ NAV ล่าสุดผ่าน proj_id
-async function fetchNAVByProjId(projId) {
-  try {
-    const url = `https://api.sec.or.th/v2/fund/nav/daily?proj_id=${encodeURIComponent(projId)}`;
+// 1. ดึง mapping proj_id -> code ทั้งหมดจาก Supabase (ทะลุขีดจำกัด 1,000 แถว)
+async function getAllFundsMapping() {
+  const projIdToCodeMap = new Map();
+  let page = 0;
+  const pageSize = 1000;
+  let hasMore = true;
+
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from('funds')
+      .select('code, proj_id')
+      .not('proj_id', 'is', null)
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+
+    if (error) {
+      console.error('เกิดข้อผิดพลาดในการดึงข้อมูลตาราง funds:', error.message);
+      break;
+    }
+
+    if (!data || data.length === 0) {
+      hasMore = false;
+    } else {
+      data.forEach((f) => {
+        if (f.proj_id && f.code) {
+          projIdToCodeMap.set(f.proj_id.trim(), f.code.trim());
+        }
+      });
+      if (data.length < pageSize) {
+        hasMore = false;
+      } else {
+        page++;
+      }
+    }
+  }
+
+  return projIdToCodeMap;
+}
+
+async function updateAllNAV() {
+  console.log('1. ดึงรายชื่อกองทุนทั้งหมดจาก Supabase (เพื่อจับคู่ proj_id -> fund_code)...');
+  const projIdToCodeMap = await getAllFundsMapping();
+  console.log(`โหลดข้อมูลจับคู่สำเร็จทั้งหมด ${projIdToCodeMap.size} กองทุน`);
+
+  if (projIdToCodeMap.size === 0) {
+    throw new Error('ไม่พบข้อมูลกองทุนในตาราง funds');
+  }
+
+  console.log('\n2. ดึงข้อมูล NAV รวมทั้งหมดจาก SEC API ด้วย Cursor Pagination...');
+
+  const navRecordsMap = new Map(); // key: `${code}_${navDate}`
+  let nextCursor = '';
+  let pageNum = 1;
+
+  do {
+    let url = 'https://api.sec.or.th/v2/fund/nav/daily?page_size=100';
+    if (nextCursor) {
+      url += `&next_cursor=${encodeURIComponent(nextCursor)}`;
+    }
+
     const res = await fetch(url, {
       headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
     });
 
-    if (!res.ok) return null;
-
-    const data = await res.json();
-    const items = Array.isArray(data) ? data : (data.items ?? data.data ?? []);
-    if (items.length === 0) return null;
-
-    // ดึงรายการ NAV วันล่าสุด
-    const latest = items[0];
-    const navVal = parseFloat(latest.net_asset_value || latest.nav || latest.last_val);
-
-    if (isNaN(navVal)) return null;
-
-    return {
-      nav_date: latest.nav_date || latest.as_of_date,
-      nav: navVal,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function updateAllNAV() {
-  console.log('1. กำลังดึงรายชื่อกองทุนพร้อม proj_id จากตาราง funds ใน Supabase...');
-  
-  // ดึงเฉพาะกองทุนที่มี proj_id
-  const { data: funds, error } = await supabase
-    .from('funds')
-    .select('code, proj_id')
-    .not('proj_id', 'is', null);
-
-  if (error || !funds || funds.length === 0) {
-    throw new Error(`ดึงข้อมูลกองทุนไม่สำเร็จ: ${error?.message}`);
-  }
-
-  console.log(`พบกองทุนที่พร้อมดึง NAV ทั้งหมด ${funds.length} รายการ`);
-
-  const navRecords = [];
-  const BATCH_SIZE = 15; // รันพร้อมกันครั้งละ 15 requests ป้องกัน Timeout และ Rate Limit
-
-  console.log('\n2. เริ่มดึงข้อมูล NAV จาก SEC API...');
-
-  for (let i = 0; i < funds.length; i += BATCH_SIZE) {
-    const chunk = funds.slice(i, i + BATCH_SIZE);
-    
-    const results = await Promise.all(
-      chunk.map(async (fund) => {
-        const navData = await fetchNAVByProjId(fund.proj_id);
-        if (navData && navData.nav_date) {
-          return {
-            fund_code: fund.code,
-            nav_date: navData.nav_date,
-            nav: navData.nav,
-          };
-        }
-        return null;
-      })
-    );
-
-    const validNavs = results.filter(Boolean);
-    navRecords.push(...validNavs);
-
-    if ((i + BATCH_SIZE) % 300 === 0 || i + BATCH_SIZE >= funds.length) {
-      console.log(`- ประมวลผลแล้ว ${Math.min(i + BATCH_SIZE, funds.length)} / ${funds.length} กองทุน (พบ NAV ที่มีข้อมูล ${navRecords.length} รายการ)`);
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.warn(`รอบที่ ${pageNum} ตอบกลับสถานะ ${res.status}: ${errText.slice(0, 100)}`);
+      break;
     }
-  }
 
-  console.log(`\nรวบรวม NAV สำเร็จทั้งหมด ${navRecords.length} รายการ`);
+    const raw = await res.json();
+    const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
+
+    // อ่าน next_cursor จาก Response Body หรือ Headers
+    const nextCursorFromBody = raw.next_cursor || raw.nextCursor;
+    const nextCursorFromHeader = res.headers.get('x-next-cursor') || res.headers.get('next-cursor') || res.headers.get('next_cursor');
+    const prevCursor = nextCursor;
+    nextCursor = nextCursorFromBody || nextCursorFromHeader || '';
+
+    let matchedInThisPage = 0;
+
+    items.forEach((item) => {
+      const projId = (item.proj_id || item.proj_code || item.unique_id || '').trim();
+      if (!projId) return;
+
+      const code = projIdToCodeMap.get(projId);
+      if (!code) return; // ไม่พบใน DB ให้ข้าม
+
+      const navDate = item.nav_date || item.as_of_date || item.date;
+      const navVal = parseFloat(item.net_asset_value || item.nav || item.last_val);
+
+      if (navDate && !isNaN(navVal)) {
+        const key = `${code}_${navDate}`;
+        if (!navRecordsMap.has(key)) {
+          navRecordsMap.set(key, {
+            fund_code: code,
+            nav_date: navDate,
+            nav: navVal,
+          });
+          matchedInThisPage++;
+        }
+      }
+    });
+
+    console.log(`- รอบที่ ${pageNum}: รับข้อมูลมา ${items.length} รายการ (จับคู่ NAV สำเร็จ ${matchedInThisPage} รายการ)`);
+    pageNum++;
+
+    // หากไม่มีรายการส่งกลับ หรือ cursor ไม่เปลี่ยน ให้หยุด
+    if (items.length === 0 || (nextCursor && nextCursor === prevCursor)) {
+      break;
+    }
+
+  } while (nextCursor);
+
+  const navRecords = Array.from(navRecordsMap.values());
+  console.log(`\nสรุป: รวบรวมข้อมูล NAV ทั้งหมดได้รวม ${navRecords.length} รายการ`);
 
   if (navRecords.length === 0) {
-    console.log('ไม่พบข้อมูล NAV ที่ต้องบันทึก');
+    console.log('ไม่พบข้อมูล NAV ที่สามารถแมตช์บันทึกได้');
     return;
   }
 
-  // 3. บันทึกลงตาราง nav_history
-  console.log('\n3. บันทึกข้อมูลลงตาราง nav_history บน Supabase...');
-  const INSERT_CHUNK = 200;
-  let savedCount = 0;
+  // 3. บันทึกลง Supabase ตาราง nav_history
+  console.log('\n3. บันทึกข้อมูลลงตาราง nav_history ใน Supabase...');
+  const chunkSize = 500;
+  let insertedCount = 0;
 
-  for (let i = 0; i < navRecords.length; i += INSERT_CHUNK) {
-    const chunk = navRecords.slice(i, i + INSERT_CHUNK);
-    const { error: insertError } = await supabase
+  for (let i = 0; i < navRecords.length; i += chunkSize) {
+    const chunk = navRecords.slice(i, i + chunkSize);
+    const { error } = await supabase
       .from('nav_history')
       .upsert(chunk, { onConflict: 'fund_code,nav_date' });
 
-    if (insertError) {
-      console.error(`เกิดข้อผิดพลาดชุดที่ ${i}:`, insertError.message);
+    if (error) {
+      console.error(`เกิดข้อผิดพลาดในการบันทึกชุดที่ ${i}:`, error.message);
     } else {
-      savedCount += chunk.length;
+      insertedCount += chunk.length;
     }
   }
 
-  console.log(`บันทึก NAV ลง Supabase เรียบร้อยแล้วทั้งหมด ${savedCount} รายการ!`);
+  console.log(`\nบันทึกข้อมูล NAV ลง nav_history สำเร็จทั้งหมด ${insertedCount} รายการ!`);
 }
 
 updateAllNAV().catch((err) => {
