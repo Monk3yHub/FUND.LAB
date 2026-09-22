@@ -16,10 +16,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
 });
 
 async function syncAllFunds() {
-  console.log('กำลังดึงรายชื่อกองทุนจาก SEC API v2 (general-info/profiles)...');
+  console.log('กำลังดึงรายชื่อกองทุนทั้งหมดจาก SEC API v2 (daily-info/nav)...');
 
-  // SEC API v2 General Info Profiles Endpoint
-  const url = 'https://api.sec.or.th/v2/fund/general-info/profiles';
+  // ดึงจาก daily-info/nav เพื่อรับรายชื่อกองทุนแอคทีฟทั้งหมดในครั้งเดียว
+  const url = 'https://api.sec.or.th/v2/fund/daily-info/nav';
 
   const res = await fetch(url, {
     headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
@@ -31,10 +31,9 @@ async function syncAllFunds() {
   }
 
   const raw = await res.json();
-  // SEC API v2 มักจะซ้อนอยู่ใน .items หรือส่งมาเป็น Array
   const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
 
-  console.log(`พบข้อมูลกองทุนจาก SEC API ทั้งหมด ${items.length} รายการ`);
+  console.log(`พบข้อมูลจาก SEC API ทั้งหมด ${items.length} รายการ`);
 
   if (items.length === 0) {
     throw new Error('ไม่พบข้อมูลกองทุนส่งกลับมาจาก SEC API');
@@ -44,8 +43,8 @@ async function syncAllFunds() {
   const fundsToInsert = items
     .map((item) => {
       const projId = item.proj_id;
-      const code = (item.proj_abbr_name || item.unique_id || item.sym_code || item.proj_id)?.trim();
-      const name = (item.proj_name_th || item.proj_name_en || item.proj_abbr_name || code)?.trim();
+      const code = (item.unique_id || item.proj_abbr_name || item.proj_id)?.trim();
+      const name = (item.proj_name_th || item.proj_name_en || code)?.trim();
 
       return {
         proj_id: projId,
@@ -78,7 +77,7 @@ async function syncAllFunds() {
     }
   }
 
-  console.log(` บันทึกรายชื่อกองทุนเรียบร้อยแล้วทั้งหมด ${insertedCount} กองทุน!`);
+  console.log(`บันทึกรายชื่อกองทุนเรียบร้อยแล้วทั้งหมด ${insertedCount} กองทุน!`);
 }
 
 syncAllFunds().catch((err) => {
