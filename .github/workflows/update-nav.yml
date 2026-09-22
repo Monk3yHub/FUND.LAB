@@ -20,14 +20,14 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
 
-          - name: Sync Funds List from SEC
+  name: Sync Funds List from SEC
   run: node scripts/sync-funds.mjs
   env:
     SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
     SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
     SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
 
-- name: Update Daily NAV
+  name: Update Daily NAV
   run: node scripts/update-nav.mjs
   env:
     SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
