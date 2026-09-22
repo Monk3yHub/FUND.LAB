@@ -15,7 +15,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   realtime: { transport: ws },
 });
 
-// 1. ดึง mapping proj_id -> code ทั้งหมดจาก Supabase (ทะลุขีดจำกัด 1,000 แถว)
+// 1. ดึง mapping proj_id -> code ทั้งหมดจาก Supabase
 async function getAllFundsMapping() {
   const projIdToCodeMap = new Map();
   let page = 0;
@@ -62,14 +62,15 @@ async function updateAllNAV() {
     throw new Error('ไม่พบข้อมูลกองทุนในตาราง funds');
   }
 
-  console.log('\n2. ดึงข้อมูล NAV รวมทั้งหมดจาก SEC API ด้วย Cursor Pagination...');
+  console.log('\n2. ดึงข้อมูล NAV จาก SEC API (/v2/fund/daily-info/nav)...');
 
-  const navRecordsMap = new Map(); // key: `${code}_${navDate}`
+  const navRecordsMap = new Map();
   let nextCursor = '';
   let pageNum = 1;
 
   do {
-    let url = 'https://api.sec.or.th/v2/fund/nav/daily?page_size=100';
+    // ใช้ Endpoint ที่ถูกต้องตรงตามการทดสอบในหน้าเว็บ
+    let url = 'https://api.sec.or.th/v2/fund/daily-info/nav?page_size=100';
     if (nextCursor) {
       url += `&next_cursor=${encodeURIComponent(nextCursor)}`;
     }
@@ -87,7 +88,6 @@ async function updateAllNAV() {
     const raw = await res.json();
     const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
 
-    // อ่าน next_cursor จาก Response Body หรือ Headers
     const nextCursorFromBody = raw.next_cursor || raw.nextCursor;
     const nextCursorFromHeader = res.headers.get('x-next-cursor') || res.headers.get('next-cursor') || res.headers.get('next_cursor');
     const prevCursor = nextCursor;
@@ -100,10 +100,11 @@ async function updateAllNAV() {
       if (!projId) return;
 
       const code = projIdToCodeMap.get(projId);
-      if (!code) return; // ไม่พบใน DB ให้ข้าม
+      if (!code) return;
 
       const navDate = item.nav_date || item.as_of_date || item.date;
-      const navVal = parseFloat(item.net_asset_value || item.nav || item.last_val);
+      // ดึงค่า NAV จาก last_val ตามโครงสร้าง JSON จริง
+      const navVal = parseFloat(item.last_val ?? item.net_asset_value ?? item.nav);
 
       if (navDate && !isNaN(navVal)) {
         const key = `${code}_${navDate}`;
@@ -121,7 +122,6 @@ async function updateAllNAV() {
     console.log(`- รอบที่ ${pageNum}: รับข้อมูลมา ${items.length} รายการ (จับคู่ NAV สำเร็จ ${matchedInThisPage} รายการ)`);
     pageNum++;
 
-    // หากไม่มีรายการส่งกลับ หรือ cursor ไม่เปลี่ยน ให้หยุด
     if (items.length === 0 || (nextCursor && nextCursor === prevCursor)) {
       break;
     }
