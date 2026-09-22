@@ -1,15 +1,7 @@
 import ws from 'ws';
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = (() => {
-  const raw = process.env.SUPABASE_URL?.trim();
-  if (!raw) return raw;
-  try {
-    return new URL(raw).origin;
-  } catch {
-    return raw;
-  }
-})();
+const SUPABASE_URL = process.env.SUPABASE_URL?.trim();
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY?.trim();
 const SEC_API_KEY = process.env.SEC_API_KEY?.trim();
 
@@ -24,51 +16,72 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
 });
 
 async function syncAllFunds() {
-  console.log('กำลังดึงรายชื่อกองทุนทั้งหมดจาก SEC API...');
+  console.log('กำลังดึงรายชื่อกองทุนจาก SEC API v2 (general-info/profiles)...');
 
-  // Endpoint ดึงรายชื่อกองทุนทั้งหมดของ SEC API v2
-  const url = 'https://api.sec.or.th/v2/fund/daily-info/fund';
+  // SEC API v2 General Info Profiles Endpoint
+  const url = 'https://api.sec.or.th/v2/fund/general-info/profiles';
 
   const res = await fetch(url, {
     headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
   });
 
   if (!res.ok) {
-    throw new Error(`SEC API Error status: ${res.status}`);
+    const errorText = await res.text().catch(() => '');
+    throw new Error(`SEC API Error status: ${res.status} - ${errorText.slice(0, 150)}`);
   }
 
   const raw = await res.json();
-  const items = raw.items ?? (Array.isArray(raw) ? raw : []);
-  console.log(`พบกองทุนในระบบ SEC ทั้งหมด ${items.length} รายการ`);
+  // SEC API v2 มักจะซ้อนอยู่ใน .items หรือส่งมาเป็น Array
+  const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
+
+  console.log(`พบข้อมูลกองทุนจาก SEC API ทั้งหมด ${items.length} รายการ`);
+
+  if (items.length === 0) {
+    throw new Error('ไม่พบข้อมูลกองทุนส่งกลับมาจาก SEC API');
+  }
 
   // แปลงข้อมูลให้อยู่ในโครงสร้างตาราง funds (code, proj_id, name)
   const fundsToInsert = items
-    .filter((item) => item.proj_id && (item.proj_name_th || item.unique_id))
-    .map((item) => ({
-      proj_id: item.proj_id,
-      code: item.unique_id || item.proj_id, // หรือใช้ชื่อย่อกองทุน
-      name: item.proj_name_th || item.proj_name_en || 'กองทุนรวม',
-    }));
+    .map((item) => {
+      const projId = item.proj_id;
+      const code = (item.proj_abbr_name || item.unique_id || item.sym_code || item.proj_id)?.trim();
+      const name = (item.proj_name_th || item.proj_name_en || item.proj_abbr_name || code)?.trim();
 
-  // บันทึกลง Supabase ทีละ 200 รายการ (Batch Insert)
+      return {
+        proj_id: projId,
+        code: code,
+        name: name,
+      };
+    })
+    .filter((f) => f.proj_id && f.code && f.name);
+
+  // ลบรายการที่ code ซ้ำกัน
+  const uniqueFunds = Array.from(
+    new Map(fundsToInsert.map((f) => [f.code, f])).values()
+  );
+
+  console.log(`กำลังบันทึกกองทุนจำนวน ${uniqueFunds.length} รายการ ลง Supabase...`);
+
   const chunkSize = 200;
   let insertedCount = 0;
 
-  for (let i = 0; i < fundsToInsert.length; i += chunkSize) {
-    const chunk = fundsToInsert.slice(i, i + chunkSize);
+  for (let i = 0; i < uniqueFunds.length; i += chunkSize) {
+    const chunk = uniqueFunds.slice(i, i + chunkSize);
     const { error } = await supabase
       .from('funds')
-      .upsert(chunk, { onConflict: 'proj_id' });
+      .upsert(chunk, { onConflict: 'code' });
 
     if (error) {
-      console.error(`เกิดข้อผิดพลาดในชุดที่ ${i}:`, error.message);
+      console.error(`เกิดข้อผิดพลาดชุดที่ ${i}:`, error.message);
     } else {
       insertedCount += chunk.length;
-      console.log(`บันทึกแล้ว ${insertedCount} / ${fundsToInsert.length} กองทุน`);
     }
   }
 
-  console.log(' Sync รายชื่อกองทุนจาก SEC เรียบร้อยแล้ว!');
+  console.log(` บันทึกรายชื่อกองทุนเรียบร้อยแล้วทั้งหมด ${insertedCount} กองทุน!`);
 }
 
-syncAllFunds().catch(console.error);
+syncAllFunds().catch((err) => {
+  console.error('Sync failed:', err?.message ?? err);
+  process.exit(1);
+});
