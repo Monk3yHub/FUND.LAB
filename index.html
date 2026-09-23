@@ -41,7 +41,7 @@
   <section id="tab-build">
     <div class="card">
       <h2 style="font-size:14px;">เลือกกองทุน</h2>
-      <input type="text" id="search" placeholder="พิมพ์รหัสกองทุน" style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);">
+      <input type="text" id="search" placeholder="พิมพ์รหัสหรือชื่อกองทุน (เช่น KTWC, ONE, K-)" style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);">
       <div id="fundList" style="margin-top:8px;max-height:220px;overflow-y:auto;"></div>
     </div>
     <div class="card">
@@ -63,20 +63,19 @@
 <script type="module">
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
-// ============ 3 ค่าที่ต้องแก้เป็นของจริง ============
-const LIFF_ID = "2011677026-ti2t0BRg";                       // จากขั้น 4.2
-const SUPABASE_URL = "https://njtxoohmhhvskxjqovps.supabase.co"; // จาก Supabase > Settings > API
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5qdHhvb2htaGh2c2t4anFvdnBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5OTE2MzcsImV4cCI6MjEwNTU2NzYzN30.54Cea7ALG0-xzieBLUl0B0WOIcsIoRL1hoaDhc846wA"; // anon/publishable key เท่านั้น ห้ามใช้ service key
-// ====================================================
+// ============ 3 ค่าเดิมของคุณ ============
+const LIFF_ID = "2011677026-ti2t0BRg";
+const SUPABASE_URL = "https://njtxoohmhhvskxjqovps.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5qdHhvb2htaGh2c2t4anFvdnBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5OTE2MzcsImV4cCI6MjEwNTU2NzYzN30.54Cea7ALG0-xzieBLUl0B0WOIcsIoRL1hoaDhc846wA";
+// ==========================================
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const START_CASH = 1000000;
-const RISK_FREE = 0.015;
 
 let lineUserId = null, nickname = "";
-let FUNDS = [];             // [{code,name,nav}]
+let FUNDS = [];             // [{code, name, nav}]
 let portfolio = {};         // code -> amount
-let players = [];           // [{line_user_id, nickname, holdings:[{fund_code,amount}]}]
+let searchTimeout = null;
 
 function fmt(n){ return Math.round(n).toLocaleString('en-US'); }
 function pct(n){ return (n*100).toFixed(2)+"%"; }
@@ -95,36 +94,98 @@ async function boot(){
     { onConflict: 'line_user_id' }
   );
 
-  await loadFunds();
+  loadFunds();
   await loadPortfolio();
   await loadLeaderboard();
 }
 
-// ---------- Funds + latest NAV ----------
-async function loadFunds(){
-  const { data: funds } = await supabase.from('funds').select('code,name');
-  const { data: navs } = await supabase.from('latest_nav').select('fund_code,nav');
-  const navMap = Object.fromEntries((navs||[]).map(n=>[n.fund_code, n.nav]));
-  FUNDS = (funds||[]).map(f => ({ code:f.code, name:f.name, nav: navMap[f.code] ?? null }));
-  renderFundList();
+// ---------- ระบบค้นหากองทุน (Server-side Search ค้นได้ทั้ง 8,000+ กองทุน) ----------
+function loadFunds(){
+  document.getElementById('fundList').innerHTML = '<div class="loading">พิมพ์รหัสหรือชื่อกองทุนเพื่อค้นหา</div>';
 }
 
-function renderFundList(filter=""){
+document.getElementById('search').oninput = (e) => {
+  clearTimeout(searchTimeout);
+  const query = e.target.value.trim();
+  
+  if (!query) {
+    document.getElementById('fundList').innerHTML = '<div class="loading">พิมพ์รหัสหรือชื่อกองทุนเพื่อค้นหา</div>';
+    return;
+  }
+  
+  // Debounce 300ms ชะลอการส่ง request ขณะพิมพ์
+  searchTimeout = setTimeout(() => searchFunds(query), 300);
+};
+
+async function searchFunds(query) {
   const list = document.getElementById('fundList');
-  const f = filter.trim().toUpperCase();
-  const matches = FUNDS.filter(x => x.code.toUpperCase().startsWith(f) || x.name.toUpperCase().includes(f));
-  list.innerHTML = matches.map(fund => `
+  list.innerHTML = '<div class="loading">กำลังค้นหา...</div>';
+
+  const f = query.toUpperCase();
+
+  // ยิงตรงไปค้นหาในตาราง funds บน Supabase ไม่ติด limit 1,000 แถว
+  const { data: funds, error } = await supabase
+    .from('funds')
+    .select('code, name')
+    .or(`code.ilike.%${f}%,name.ilike.%${f}%`)
+    .limit(20);
+
+  if (error || !funds || funds.length === 0) {
+    list.innerHTML = '<div class="loading">ไม่พบกองทุน</div>';
+    return;
+  }
+
+  // ดึง NAV เฉพาะของกองทุนที่ค้นพบ
+  const fundCodes = funds.map(x => x.code);
+  const { data: navs } = await supabase
+    .from('latest_nav')
+    .select('fund_code, nav')
+    .in('fund_code', fundCodes);
+
+  const navMap = Object.fromEntries((navs || []).map(n => [n.fund_code, n.nav]));
+
+  list.innerHTML = funds.map(fund => `
     <div class="fund-item">
-      <div><b>${fund.code}</b> · NAV ${fund.nav ?? '-'}<br><span style="color:var(--sub);font-size:11px;">${fund.name}</span></div>
-      <button class="btn small" style="background:var(--accent)" data-add="${fund.code}">+ เพิ่ม</button>
-    </div>`).join('') || '<div class="loading">ไม่พบกองทุน</div>';
-  list.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { portfolio[b.dataset.add] ??= 0; renderPortfolio(); });
+      <div><b>${fund.code}</b> · NAV ${navMap[fund.code] ?? '-'}<br><span style="color:var(--sub);font-size:11px;">${fund.name}</span></div>
+      <button class="btn small" style="background:var(--accent)" data-add="${fund.code}" data-nav="${navMap[fund.code] ?? ''}">+ เพิ่ม</button>
+    </div>`).join('');
+
+  list.querySelectorAll('[data-add]').forEach(b => {
+    b.onclick = () => {
+      const code = b.dataset.add;
+      const navVal = b.dataset.nav ? parseFloat(b.dataset.nav) : null;
+      
+      portfolio[code] ??= 0;
+      
+      const existing = FUNDS.find(x => x.code === code);
+      if (!existing) {
+        FUNDS.push({ code, nav: navVal });
+      } else {
+        existing.nav = navVal;
+      }
+      
+      renderPortfolio();
+    };
+  });
 }
-document.getElementById('search').oninput = e => renderFundList(e.target.value);
 
 // ---------- Portfolio builder ----------
 async function loadPortfolio(){
-  const { data } = await supabase.from('holdings').select('fund_code,amount').eq('player_line_user_id', lineUserId);
+  const { data } = await supabase.from('holdings').select('fund_code,amount,units').eq('player_line_user_id', lineUserId);
+  
+  // โหลด NAV ของกองทุนที่มีอยู่ในพอร์ตเดิมขึ้นมาด้วย
+  if (data && data.length > 0) {
+    const codes = data.map(h => h.fund_code);
+    const { data: navs } = await supabase.from('latest_nav').select('fund_code,nav').in('fund_code', codes);
+    const navMap = Object.fromEntries((navs||[]).map(n=>[n.fund_code, n.nav]));
+    
+    codes.forEach(c => {
+      if (!FUNDS.find(x => x.code === c)) {
+        FUNDS.push({ code: c, nav: navMap[c] ?? null });
+      }
+    });
+  }
+
   portfolio = Object.fromEntries((data||[]).map(h => [h.fund_code, h.amount]));
   renderPortfolio();
 }
@@ -133,7 +194,7 @@ function renderPortfolio(){
   const body = document.getElementById('portfolioBody');
   body.innerHTML = Object.keys(portfolio).map(code => `
     <tr>
-      <td>${code}</td>
+      <td><b>${code}</b></td>
       <td class="right"><input type="number" min="0" step="1000" value="${portfolio[code]}" data-amt="${code}"></td>
       <td class="right"><button class="btn small" data-del="${code}">×</button></td>
     </tr>`).join('');
@@ -153,9 +214,8 @@ document.getElementById('submitBtn').onclick = async () => {
   const used = Object.values(portfolio).reduce((s,a)=>s+a,0);
   if(used === 0 || used > START_CASH){ alert("เช็ควงเงินให้ถูกต้องก่อน (0 < ยอดรวม ≤ 1,000,000)"); return; }
 
-  // ลบพอร์ตเก่าของ user นี้ทั้งหมด แล้วค่อยเขียนพอร์ตใหม่ทั้งชุด (ง่ายกว่าการ diff ทีละแถว)
   await supabase.from('holdings').delete().eq('player_line_user_id', lineUserId);
-  // บันทึก "หน่วย" ที่ซื้อได้จาก NAV ณ วันนี้ (amount / nav) เพื่อใช้คำนวณมูลค่าพอร์ตวันหลังให้แม่นยำ
+  
   const navMap = Object.fromEntries(FUNDS.map(f => [f.code, f.nav]));
   const rows = Object.entries(portfolio)
     .filter(([, amt]) => amt > 0)
@@ -165,6 +225,7 @@ document.getElementById('submitBtn').onclick = async () => {
       amount: amt,
       units: navMap[code] ? amt / navMap[code] : 0,
     }));
+    
   const { error } = await supabase.from('holdings').insert(rows);
   if(error){ alert("บันทึกไม่สำเร็จ: " + error.message); return; }
   alert("บันทึกพอร์ตเรียบร้อย!");
@@ -190,7 +251,7 @@ async function loadLeaderboard(){
     holdings.forEach(h => {
       invested += h.amount;
       const nav = navMap[h.fund_code];
-      current += nav ? h.units * nav : h.amount; // ถ้ายังไม่มี NAV วันนี้ ใช้ทุนเดิมไปก่อน
+      current += nav ? h.units * nav : h.amount;
     });
     const ret = invested ? (current - invested) / invested : 0;
     return { name: p.nickname, ret, invested, current };
