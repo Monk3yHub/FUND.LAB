@@ -62,15 +62,19 @@ async function updateAllNAV() {
     throw new Error('ไม่พบข้อมูลกองทุนในตาราง funds');
   }
 
-  console.log('\n2. ดึงข้อมูล NAV จาก SEC API (/v2/fund/daily-info/nav)...');
+  // กำหนดวันที่เริ่มต้นเป็นวันแรกของปีปัจจุบัน (เช่น 2026-01-01)
+  const currentYear = new Date().getFullYear();
+  const startNavDate = `${currentYear}-01-01`;
+
+  console.log(`\n2. ดึงข้อมูล NAV เฉพาะของปีปัจจุบัน (${currentYear}) ตั้งแต่วันที่ ${startNavDate} จาก SEC API...`);
 
   const navRecordsMap = new Map();
   let nextCursor = '';
   let pageNum = 1;
 
   do {
-    // ใช้ Endpoint ที่ถูกต้องตรงตามการทดสอบในหน้าเว็บ
-    let url = 'https://api.sec.or.th/v2/fund/daily-info/nav?page_size=100';
+    // ส่ง start_nav_date เพื่อกรองข้อมูลเฉพาะของปีปัจจุบัน
+    let url = `https://api.sec.or.th/v2/fund/daily-info/nav?page_size=100&start_nav_date=${startNavDate}`;
     if (nextCursor) {
       url += `&next_cursor=${encodeURIComponent(nextCursor)}`;
     }
@@ -103,10 +107,10 @@ async function updateAllNAV() {
       if (!code) return;
 
       const navDate = item.nav_date || item.as_of_date || item.date;
-      // ดึงค่า NAV จาก last_val ตามโครงสร้าง JSON จริง
       const navVal = parseFloat(item.last_val ?? item.net_asset_value ?? item.nav);
 
-      if (navDate && !isNaN(navVal)) {
+      // กรองซ้ำให้มั่นใจว่าเป็นวันที่ตั้งแต่ต้นปีปัจจุบันเป็นต้นไป
+      if (navDate && navDate >= startNavDate && !isNaN(navVal)) {
         const key = `${code}_${navDate}`;
         if (!navRecordsMap.has(key)) {
           navRecordsMap.set(key, {
@@ -119,7 +123,7 @@ async function updateAllNAV() {
       }
     });
 
-    console.log(`- รอบที่ ${pageNum}: รับข้อมูลมา ${items.length} รายการ (จับคู่ NAV สำเร็จ ${matchedInThisPage} รายการ)`);
+    console.log(`- รอบที่ ${pageNum}: รับข้อมูลมา ${items.length} รายการ (บันทึก NAV ของปี ${currentYear} ได้ ${matchedInThisPage} รายการ)`);
     pageNum++;
 
     if (items.length === 0 || (nextCursor && nextCursor === prevCursor)) {
@@ -129,10 +133,10 @@ async function updateAllNAV() {
   } while (nextCursor);
 
   const navRecords = Array.from(navRecordsMap.values());
-  console.log(`\nสรุป: รวบรวมข้อมูล NAV ทั้งหมดได้รวม ${navRecords.length} รายการ`);
+  console.log(`\nสรุป: รวบรวมข้อมูล NAV เฉพาะปี ${currentYear} ได้รวม ${navRecords.length} รายการ`);
 
   if (navRecords.length === 0) {
-    console.log('ไม่พบข้อมูล NAV ที่สามารถแมตช์บันทึกได้');
+    console.log('ไม่พบข้อมูล NAV ของปีนี้ที่ต้องบันทึก');
     return;
   }
 
