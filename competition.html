@@ -5,83 +5,83 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Fund Challenge - โหมดแข่งขัน</title>
 <style>
-  :root{ --bg:#f6f7fb; --card:#fff; --text:#1a1d29; --sub:#6b7280; --accent:#00b894; --danger:#e74c3c; --border:#e5e7eb; }
-  *{box-sizing:border-box;}
-  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans Thai",sans-serif;}
-  header{position:sticky;top:0;z-index:10;background:var(--accent);color:#fff;padding:16px;}
-  header h1{margin:0;font-size:17px;}
-  main{max-width:520px;margin:0 auto;padding:14px;padding-bottom:60px;}
-  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px;}
-  .tabs{display:flex;gap:6px;padding:10px 12px 0;background:var(--accent);}
-  .tab{flex:1;text-align:center;padding:9px 6px;border-radius:10px 10px 0 0;font-size:13px;font-weight:600;color:#fff;background:rgba(255,255,255,.12);cursor:pointer;}
-  .tab.active{background:var(--bg);color:var(--accent);}
-  input[type=number]{width:75px;padding:6px;border-radius:8px;border:1px solid var(--border);text-align:right;}
-  table{width:100%;border-collapse:collapse;font-size:12.5px;}
-  th,td{text-align:left;padding:7px 4px;border-bottom:1px solid var(--border);}
-  .right{text-align:right;}
-  .btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 14px;font-size:13px;font-weight:600;cursor:pointer;}
-  .btn.small{padding:6px 9px;font-size:12px;background:var(--danger);}
-  .fund-item{display:flex;justify-content:space-between;align-items:center;padding:9px 4px;border-bottom:1px solid var(--border);font-size:13px;}
-  .rank-row{display:flex;justify-content:space-between;align-items:center;padding:10px 6px;border-bottom:1px solid var(--border);font-size:13px;}
-  .you{background:rgba(0,184,148,.1);border-radius:8px;font-weight:bold;}
-  .summary-box{background:rgba(0,184,148,.08);padding:12px;border-radius:10px;margin-top:10px;}
-  .loading{color:var(--sub);text-align:center;padding:20px;}
-  .deadline-banner{background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;padding:10px 12px;border-radius:10px;font-size:12px;margin-bottom:12px;text-align:center;font-weight:500;}
+  :root{ --bg:#f6f7fb; --card:#fff; --text:#1a1d29; --sub:#6b7280; --accent:#00b894; --danger:#e74c3c; --border:#e5e7eb; }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans Thai",sans-serif;}
+  header{position:sticky;top:0;z-index:10;background:var(--accent);color:#fff;padding:16px;}
+  header h1{margin:0;font-size:17px;}
+  main{max-width:520px;margin:0 auto;padding:14px;padding-bottom:60px;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px;}
+  .tabs{display:flex;gap:6px;padding:10px 12px 0;background:var(--accent);}
+  .tab{flex:1;text-align:center;padding:9px 6px;border-radius:10px 10px 0 0;font-size:13px;font-weight:600;color:#fff;background:rgba(255,255,255,.12);cursor:pointer;}
+  .tab.active{background:var(--bg);color:var(--accent);}
+  input[type=number]{width:75px;padding:6px;border-radius:8px;border:1px solid var(--border);text-align:right;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th,td{text-align:left;padding:7px 4px;border-bottom:1px solid var(--border);}
+  .right{text-align:right;}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 14px;font-size:13px;font-weight:600;cursor:pointer;}
+  .btn.small{padding:6px 9px;font-size:12px;background:var(--danger);}
+  .fund-item{display:flex;justify-content:space-between;align-items:center;padding:9px 4px;border-bottom:1px solid var(--border);font-size:13px;}
+  .rank-row{display:flex;justify-content:space-between;align-items:center;padding:10px 6px;border-bottom:1px solid var(--border);font-size:13px;}
+  .you{background:rgba(0,184,148,.1);border-radius:8px;font-weight:bold;}
+  .summary-box{background:rgba(0,184,148,.08);padding:12px;border-radius:10px;margin-top:10px;}
+  .loading{color:var(--sub);text-align:center;padding:20px;}
+  .deadline-banner{background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;padding:10px 12px;border-radius:10px;font-size:12px;margin-bottom:12px;text-align:center;font-weight:500;}
 </style>
 </head>
 <body>
 <header>
-  <h1>🏆 Fund Challenge (โหมดแข่งขัน)</h1>
-  <p id="whoami" style="margin:4px 0 0;font-size:12px;opacity:.85;">กำลังเข้าสู่ระบบผ่าน LINE...</p>
+  <h1>🏆 Fund Challenge (โหมดแข่งขัน)</h1>
+  <p id="whoami" style="margin:4px 0 0;font-size:12px;opacity:.85;">กำลังเข้าสู่ระบบผ่าน LINE...</p>
 </header>
 <div class="tabs">
-  <div class="tab active" data-tab="build">จัดพอร์ตแข่ง</div>
-  <div class="tab" data-tab="board">กระดานอันดับวัดผล</div>
+  <div class="tab active" data-tab="build">จัดพอร์ตแข่ง</div>
+  <div class="tab" data-tab="board">กระดานอันดับวัดผล</div>
 </div>
 <main>
-  <section id="tab-build">
-    <!-- แถบแจ้งเตือนวันหมดเขต -->
-    <div class="deadline-banner" id="deadlineBanner">
-      ⏳ แก้ไขพอร์ตได้ถึง: <b>วันศุกร์ที่ 25 ก.ย. 2026 เวลา 23:59 น.</b>
-    </div>
+  <section id="tab-build">
+    <!-- แถบแจ้งเตือนวันหมดเขต -->
+    <div class="deadline-banner" id="deadlineBanner">
+      ⏳ แก้ไขพอร์ตได้ถึง: <b>วันศุกร์ที่ 25 ก.ย. 2026 เวลา 23:59 น.</b>
+    </div>
 
-    <div class="card" id="searchCard">
-      <h2 style="font-size:14px;">เลือกกองทุนแข่งขัน</h2>
-      <input type="text" id="search" placeholder="พิมพ์รหัสหรือชื่อกองทุน..." style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);">
-      <div id="fundList" style="margin-top:8px;max-height:200px;overflow-y:auto;"></div>
-    </div>
+    <div class="card" id="searchCard">
+      <h2 style="font-size:14px;">เลือกกองทุนแข่งขัน</h2>
+      <input type="text" id="search" placeholder="พิมพ์รหัสหรือชื่อกองทุน..." style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);">
+      <div id="fundList" style="margin-top:8px;max-height:200px;overflow-y:auto;"></div>
+    </div>
 
-    <div class="card">
-      <h2 style="font-size:14px;">พอร์ตแข่งขัน (วงเงินเทียบเท่า 1,000,000 บาท)</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>กองทุน</th>
-            <th class="right">สัดส่วน (%)</th>
-            <th class="right">คิดเป็นเงิน (บาท)</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="portfolioBody"></tbody>
-      </table>
+    <div class="card">
+      <h2 style="font-size:14px;">พอร์ตแข่งขัน (วงเงินเทียบเท่า 1,000,000 บาท)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>กองทุน</th>
+            <th class="right">สัดส่วน (%)</th>
+            <th class="right">คิดเป็นเงิน (บาท)</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="portfolioBody"></tbody>
+      </table>
 
-      <div class="summary-box">
-        <div style="display:flex;justify-content:space-between;font-size:13px;">
-          <span>สัดส่วนรวม: <b id="totalPct">0%</b></span>
-          <span>มูลค่าเริ่มต้น: <b id="totalValue">0</b> บาท</span>
-        </div>
-      </div>
+      <div class="summary-box">
+        <div style="display:flex;justify-content:space-between;font-size:13px;">
+          <span>สัดส่วนรวม: <b id="totalPct">0%</b></span>
+          <span>มูลค่าเริ่มต้น: <b id="totalValue">0</b> บาท</span>
+        </div>
+      </div>
 
-      <button class="btn" id="submitBtn" style="width:100%;margin-top:12px;">🏆 ส่งพอร์ตเข้าร่วมแข่งขัน</button>
-    </div>
-  </section>
+      <button class="btn" id="submitBtn" style="width:100%;margin-top:12px;">🏆 ส่งพอร์ตเข้าร่วมแข่งขัน</button>
+    </div>
+  </section>
 
-  <section id="tab-board" style="display:none;">
-    <div class="card">
-      <h2 style="font-size:14px;margin-bottom:10px;">🏆 อันดับผลตอบแทนพอร์ตแข่งขัน</h2>
-      <div id="leaderboard" class="loading">กำลังโหลดอันดับ...</div>
-    </div>
-  </section>
+  <section id="tab-board" style="display:none;">
+    <div class="card">
+      <h2 style="font-size:14px;margin-bottom:10px;">🏆 อันดับผลตอบแทนพอร์ตแข่งขัน</h2>
+      <div id="leaderboard" class="loading">กำลังโหลดอันดับ...</div>
+    </div>
+  </section>
 </main>
 
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -89,12 +89,12 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
 // ⚠️ ใส่ LIFF ID โหมดแข่งขันของคุณตรงนี้
-const LIFF_ID = "2011677026-026ezmgt"; 
+const LIFF_ID = "2011677026-026ezmgt"; 
 const SUPABASE_URL = "https://njtxoohmhhvskxjqovps.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5qdHhvb2htaGh2c2t4anFvdnBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5OTE2MzcsImV4cCI6MjEwNTU2NzYzN30.54Cea7ALG0-xzieBLUl0B0WOIcsIoRL1hoaDhc846wA";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const CAPITAL = 1000000; 
+const CAPITAL = 1000000; 
 
 // 🎯 วันหมดเขตแก้ไขพอร์ต (ศุกร์ที่ 25 ก.ย. 2026 เวลา 23:59:59 น.)
 const DEADLINE = new Date("2026-09-25T23:59:59+07:00");
@@ -109,206 +109,206 @@ function pctFmt(n){ return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
 
 // ฟังก์ชันตรวจสอบและล็อคการแก้ไขพอร์ตเมื่อหมดเวลา
 function checkDeadline() {
-  const isExpired = new Date() > DEADLINE;
-  const submitBtn = document.getElementById('submitBtn');
-  const banner = document.getElementById('deadlineBanner');
-  const searchCard = document.getElementById('searchCard');
-  
-  if (isExpired) {
-    if (banner) {
-      banner.style.background = '#f8d7da';
-      banner.style.color = '#721c24';
-      banner.style.borderColor = '#f5c6cb';
-      banner.innerHTML = '🔒 <b>หมดเวลาแก้ไขพอร์ตแข่งขันแล้ว</b> (สิ้นสุดเมื่อ 25 ก.ย. 2026 เวลา 23:59 น.)';
-    }
-    if (searchCard) searchCard.style.display = 'none';
+  const isExpired = new Date() > DEADLINE;
+  const submitBtn = document.getElementById('submitBtn');
+  const banner = document.getElementById('deadlineBanner');
+  const searchCard = document.getElementById('searchCard');
+  
+  if (isExpired) {
+    if (banner) {
+      banner.style.background = '#f8d7da';
+      banner.style.color = '#721c24';
+      banner.style.borderColor = '#f5c6cb';
+      banner.innerHTML = '🔒 <b>หมดเวลาแก้ไขพอร์ตแข่งขันแล้ว</b> (สิ้นสุดเมื่อ 25 ก.ย. 2026 เวลา 23:59 น.)';
+    }
+    if (searchCard) searchCard.style.display = 'none';
 
-    submitBtn.disabled = true;
-    submitBtn.style.background = '#9ca3af';
-    submitBtn.style.cursor = 'not-allowed';
-    submitBtn.textContent = '🔒 หมดเวลาแก้ไขพอร์ตแข่งขันแล้ว';
+    submitBtn.disabled = true;
+    submitBtn.style.background = '#9ca3af';
+    submitBtn.style.cursor = 'not-allowed';
+    submitBtn.textContent = '🔒 หมดเวลาแก้ไขพอร์ตแข่งขันแล้ว';
 
-    document.querySelectorAll('#portfolioBody input').forEach(input => {
-      input.disabled = true;
-    });
+    document.querySelectorAll('#portfolioBody input').forEach(input => {
+      input.disabled = true;
+    });
 
-    document.querySelectorAll('#portfolioBody .btn.small').forEach(btn => {
-      btn.style.display = 'none';
-    });
-  }
+    document.querySelectorAll('#portfolioBody .btn.small').forEach(btn => {
+      btn.style.display = 'none';
+    });
+  }
 }
 
 async function boot(){
-  await liff.init({ liffId: LIFF_ID });
-  if(!liff.isLoggedIn()){ liff.login(); return; }
+  await liff.init({ liffId: LIFF_ID });
+  if(!liff.isLoggedIn()){ liff.login(); return; }
 
-  const profile = await liff.getProfile();
-  lineUserId = profile.userId;
-  nickname = profile.displayName;
-  document.getElementById('whoami').textContent = "สวัสดีคุณ " + nickname;
+  const profile = await liff.getProfile();
+  lineUserId = profile.userId;
+  nickname = profile.displayName;
+  document.getElementById('whoami').textContent = "สวัสดีคุณ " + nickname;
 
-  await supabase.from('players').upsert({ line_user_id: lineUserId, nickname }, { onConflict: 'line_user_id' });
-  loadFunds();
-  await loadPortfolio();
-  await loadLeaderboard();
-  checkDeadline();
+  await supabase.from('players').upsert({ line_user_id: lineUserId, nickname }, { onConflict: 'line_user_id' });
+  loadFunds();
+  await loadPortfolio();
+  await loadLeaderboard();
+  checkDeadline();
 }
 
 function loadFunds(){
-  document.getElementById('fundList').innerHTML = '<div class="loading">พิมพ์รหัสหรือชื่อกองทุนเพื่อค้นหา</div>';
+  document.getElementById('fundList').innerHTML = '<div class="loading">พิมพ์รหัสหรือชื่อกองทุนเพื่อค้นหา</div>';
 }
 
 document.getElementById('search').oninput = (e) => {
-  clearTimeout(searchTimeout);
-  const query = e.target.value.trim();
-  if (!query) { loadFunds(); return; }
-  searchTimeout = setTimeout(() => searchFunds(query), 300);
+  clearTimeout(searchTimeout);
+  const query = e.target.value.trim();
+  if (!query) { loadFunds(); return; }
+  searchTimeout = setTimeout(() => searchFunds(query), 300);
 };
 
 async function searchFunds(query) {
-  if (new Date() > DEADLINE) return;
-  const list = document.getElementById('fundList');
-  list.innerHTML = '<div class="loading">กำลังค้นหา...</div>';
-  const f = query.toUpperCase();
+  if (new Date() > DEADLINE) return;
+  const list = document.getElementById('fundList');
+  list.innerHTML = '<div class="loading">กำลังค้นหา...</div>';
+  const f = query.toUpperCase();
 
-  const { data: funds } = await supabase.from('funds').select('code, name').or(`code.ilike.%${f}%,name.ilike.%${f}%`).limit(20);
-  if (!funds || funds.length === 0) { list.innerHTML = '<div class="loading">ไม่พบกองทุน</div>'; return; }
+  const { data: funds } = await supabase.from('funds').select('code, name').or(`code.ilike.%${f}%,name.ilike.%${f}%`).limit(20);
+  if (!funds || funds.length === 0) { list.innerHTML = '<div class="loading">ไม่พบกองทุน</div>'; return; }
 
-  const fundCodes = funds.map(x => x.code);
-  const { data: navs } = await supabase.from('latest_nav').select('fund_code, nav').in('fund_code', fundCodes);
-  const navMap = Object.fromEntries((navs || []).map(n => [n.fund_code, n.nav]));
+  const fundCodes = funds.map(x => x.code);
+  const { data: navs } = await supabase.from('latest_nav').select('fund_code, nav').in('fund_code', fundCodes);
+  const navMap = Object.fromEntries((navs || []).map(n => [n.fund_code, n.nav]));
 
-  list.innerHTML = funds.map(fund => `
-    <div class="fund-item">
-      <div><b>${fund.code}</b> · NAV ${navMap[fund.code] ?? '-'}<br><span style="color:var(--sub);font-size:11px;">${fund.name}</span></div>
-      <button class="btn small" style="background:var(--accent)" data-add="${fund.code}" data-nav="${navMap[fund.code] ?? ''}">+ เลือก</button>
-    </div>`).join('');
+  list.innerHTML = funds.map(fund => `
+    <div class="fund-item">
+      <div><b>${fund.code}</b> · NAV ${navMap[fund.code] ?? '-'}<br><span style="color:var(--sub);font-size:11px;">${fund.name}</span></div>
+      <button class="btn small" style="background:var(--accent)" data-add="${fund.code}" data-nav="${navMap[fund.code] ?? ''}">+ เลือก</button>
+    </div>`).join('');
 
-  list.querySelectorAll('[data-add]').forEach(b => {
-    b.onclick = () => {
-      if (new Date() > DEADLINE) return;
-      const code = b.dataset.add;
-      const navVal = b.dataset.nav ? parseFloat(b.dataset.nav) : null;
-      portfolio[code] ??= 0;
-      if (!FUNDS.find(x => x.code === code)) FUNDS.push({ code, nav: navVal });
-      renderPortfolio();
-    };
-  });
+  list.querySelectorAll('[data-add]').forEach(b => {
+    b.onclick = () => {
+      if (new Date() > DEADLINE) return;
+      const code = b.dataset.add;
+      const navVal = b.dataset.nav ? parseFloat(b.dataset.nav) : null;
+      portfolio[code] ??= 0;
+      if (!FUNDS.find(x => x.code === code)) FUNDS.push({ code, nav: navVal });
+      renderPortfolio();
+    };
+  });
 }
 
 async function loadPortfolio(){
-  const { data } = await supabase.from('competition_holdings').select('fund_code, pct').eq('player_line_user_id', lineUserId);
-  portfolio = Object.fromEntries((data||[]).map(h => [h.fund_code, Number(h.pct)]));
-  renderPortfolio();
+  const { data } = await supabase.from('competition_holdings').select('fund_code, pct').eq('player_line_user_id', lineUserId);
+  portfolio = Object.fromEntries((data||[]).map(h => [h.fund_code, Number(h.pct)]));
+  renderPortfolio();
 }
 
 function renderPortfolio(){
-  const body = document.getElementById('portfolioBody');
-  body.innerHTML = Object.keys(portfolio).map(code => {
-    const p = portfolio[code];
-    const baht = (p / 100) * CAPITAL;
-    return `
-      <tr>
-        <td><b>${code}</b></td>
-        <td class="right"><input type="number" min="0" max="100" step="5" value="${p}" data-pct="${code}"> %</td>
-        <td class="right">${fmt(baht)}</td>
-        <td class="right"><button class="btn small" data-del="${code}">×</button></td>
-      </tr>`;
-  }).join('');
+  const body = document.getElementById('portfolioBody');
+  body.innerHTML = Object.keys(portfolio).map(code => {
+    const p = portfolio[code];
+    const baht = (p / 100) * CAPITAL;
+    return `
+      <tr>
+        <td><b>${code}</b></td>
+        <td class="right"><input type="number" min="0" max="100" step="5" value="${p}" data-pct="${code}"> %</td>
+        <td class="right">${fmt(baht)}</td>
+        <td class="right"><button class="btn small" data-del="${code}">×</button></td>
+      </tr>`;
+  }).join('');
 
-  body.querySelectorAll('[data-pct]').forEach(inp => inp.oninput = () => { portfolio[inp.dataset.pct] = Number(inp.value)||0; updateSummary(); });
-  body.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { delete portfolio[b.dataset.del]; renderPortfolio(); });
-  updateSummary();
-  checkDeadline();
+  body.querySelectorAll('[data-pct]').forEach(inp => inp.oninput = () => { portfolio[inp.dataset.pct] = Number(inp.value)||0; updateSummary(); });
+  body.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { delete portfolio[b.dataset.del]; renderPortfolio(); });
+  updateSummary();
+  checkDeadline();
 }
 
 function updateSummary(){
-  const totalPct = Object.values(portfolio).reduce((s,a)=>s+a,0);
-  const totalBaht = (totalPct / 100) * CAPITAL;
-  
-  document.getElementById('totalPct').textContent = totalPct + "%";
-  document.getElementById('totalPct').style.color = totalPct !== 100 ? 'var(--danger)' : 'var(--accent)';
-  document.getElementById('totalValue').textContent = fmt(totalBaht);
+  const totalPct = Object.values(portfolio).reduce((s,a)=>s+a,0);
+  const totalBaht = (totalPct / 100) * CAPITAL;
+  
+  document.getElementById('totalPct').textContent = totalPct + "%";
+  document.getElementById('totalPct').style.color = totalPct !== 100 ? 'var(--danger)' : 'var(--accent)';
+  document.getElementById('totalValue').textContent = fmt(totalBaht);
 }
 
 document.getElementById('submitBtn').onclick = async () => {
-  if (new Date() > DEADLINE) {
-    alert("🔒 ไม่สามารถแก้ไขพอร์ตได้แล้ว เนื่องจากเลยกำหนดวันศุกร์ที่ 25 กันยายน 2026");
-    return;
-  }
+  if (new Date() > DEADLINE) {
+    alert("🔒 ไม่สามารถแก้ไขพอร์ตได้แล้ว เนื่องจากเลยกำหนดวันศุกร์ที่ 25 กันยายน 2026");
+    return;
+  }
 
-  const totalPct = Object.values(portfolio).reduce((s,a)=>s+a,0);
-  if(totalPct !== 100){ alert("สัดส่วนรวมต้องเท่ากับ 100% พอดี (ปัจจุบัน " + totalPct + "%)"); return; }
+  const totalPct = Object.values(portfolio).reduce((s,a)=>s+a,0);
+  if(totalPct !== 100){ alert("สัดส่วนรวมต้องเท่ากับ 100% พอดี (ปัจจุบัน " + totalPct + "%)"); return; }
 
-  await supabase.from('competition_holdings').delete().eq('player_line_user_id', lineUserId);
-  const rows = Object.entries(portfolio)
-    .filter(([, p]) => p > 0)
-    .map(([code, p]) => ({
-      player_line_user_id: lineUserId,
-      fund_code: code,
-      pct: p,
-    }));
-    
-  const { error } = await supabase.from('competition_holdings').insert(rows);
-  if(error){ alert("บันทึกไม่สำเร็จ: " + error.message); return; }
-  alert("บันทึกพอร์ตแข่งขันเรียบร้อย!");
-  loadLeaderboard();
+  await supabase.from('competition_holdings').delete().eq('player_line_user_id', lineUserId);
+  const rows = Object.entries(portfolio)
+    .filter(([, p]) => p > 0)
+    .map(([code, p]) => ({
+      player_line_user_id: lineUserId,
+      fund_code: code,
+      pct: p,
+    }));
+    
+  const { error } = await supabase.from('competition_holdings').insert(rows);
+  if(error){ alert("บันทึกไม่สำเร็จ: " + error.message); return; }
+  alert("บันทึกพอร์ตแข่งขันเรียบร้อย!");
+  loadLeaderboard();
 };
 
 async function loadLeaderboard(){
-  const box = document.getElementById('leaderboard');
-  box.innerHTML = '<div class="loading">กำลังคำนวณและดึงอันดับ...</div>';
+  const box = document.getElementById('leaderboard');
+  box.innerHTML = '<div class="loading">กำลังคำนวณและดึงอันดับ...</div>';
 
-  const [{ data: allPlayers }, { data: allHoldings }, { data: navs }] = await Promise.all([
-    supabase.from('players').select('line_user_id, nickname'),
-    supabase.from('competition_holdings').select('player_line_user_id, fund_code, pct'),
-    supabase.from('latest_nav').select('fund_code, nav'),
-  ]);
+  const [{ data: allPlayers }, { data: allHoldings }, { data: navs }] = await Promise.all([
+    supabase.from('players').select('line_user_id, nickname'),
+    supabase.from('competition_holdings').select('player_line_user_id, fund_code, pct'),
+    supabase.from('latest_nav').select('fund_code, nav'),
+  ]);
 
-  const navMap = Object.fromEntries((navs||[]).map(n=>[n.fund_code, n.nav]));
+  const navMap = Object.fromEntries((navs||[]).map(n=>[n.fund_code, n.nav]));
 
-  const rows = (allPlayers||[]).map(p => {
-    const holdings = (allHoldings||[]).filter(h => h.player_line_user_id === p.line_user_id);
-    if(holdings.length === 0) return null;
+  const rows = (allPlayers||[]).map(p => {
+    const holdings = (allHoldings||[]).filter(h => h.player_line_user_id === p.line_user_id);
+    if(holdings.length === 0) return null;
 
-    let currentVal = 0;
-    holdings.forEach(h => {
-      const bahtCost = (Number(h.pct) / 100) * CAPITAL;
-      const nav = navMap[h.fund_code];
-      currentVal += nav ? bahtCost : bahtCost;
-    });
+    let currentVal = 0;
+    holdings.forEach(h => {
+      const bahtCost = (Number(h.pct) / 100) * CAPITAL;
+      const nav = navMap[h.fund_code];
+      currentVal += nav ? bahtCost : bahtCost;
+    });
 
-    const retPct = ((currentVal - CAPITAL) / CAPITAL) * 100;
+    const retPct = ((currentVal - CAPITAL) / CAPITAL) * 100;
 
-    return {
-      name: p.nickname,
-      currentVal: currentVal,
-      retPct: retPct
-    };
-  }).filter(Boolean).sort((a,b) => b.retPct - a.retPct);
+    return {
+      name: p.nickname,
+      currentVal: currentVal,
+      retPct: retPct
+    };
+  }).filter(Boolean).sort((a,b) => b.retPct - a.retPct);
 
-  box.innerHTML = rows.length ? rows.map((r,i) => `
-    <div class="rank-row ${r.name===nickname?'you':''}">
-      <div><b>#${i+1}</b> ${r.name}</div>
-      <div class="right">
-        <div><b>${fmt(r.currentVal)} บาท</b></div>
-        <div style="font-size:11px;color:${r.retPct>=0?'var(--accent)':'var(--danger)'};">${pctFmt(r.retPct)}</div>
-      </div>
-    </div>`).join('') : '<div class="loading">ยังไม่มีผู้เล่นส่งพอร์ตแข่งขัน</div>';
+  box.innerHTML = rows.length ? rows.map((r,i) => `
+    <div class="rank-row ${r.name===nickname?'you':''}">
+      <div><b>#${i+1}</b> ${r.name}</div>
+      <div class="right">
+        <div><b>${fmt(r.currentVal)} บาท</b></div>
+        <div style="font-size:11px;color:${r.retPct>=0?'var(--accent)':'var(--danger)'};">${pctFmt(r.retPct)}</div>
+      </div>
+    </div>`).join('') : '<div class="loading">ยังไม่มีผู้เล่นส่งพอร์ตแข่งขัน</div>';
 }
 
 document.querySelectorAll('.tab').forEach(tab => {
-  tab.onclick = () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    const name = tab.dataset.tab;
-    document.getElementById('tab-build').style.display = name==='build' ? '' : 'none';
-    document.getElementById('tab-board').style.display = name==='board' ? '' : 'none';
-    if(name==='board') loadLeaderboard();
-  };
+  tab.onclick = () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const name = tab.dataset.tab;
+    document.getElementById('tab-build').style.display = name==='build' ? '' : 'none';
+    document.getElementById('tab-board').style.display = name==='board' ? '' : 'none';
+    if(name==='board') loadLeaderboard();
+  };
 });
 
 boot();
 </script>
 </body>
-</html> 
+</html>
