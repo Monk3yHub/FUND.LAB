@@ -73,16 +73,8 @@
     
     <!-- Pie Chart -->
     <div class="chart-container">
-      <h3 style="font-size:13px;color:var(--sub);text-align:center;margin-bottom:8px;">1. สัดส่วนการลงทุน (Asset Allocation)</h3>
+      <h3 style="font-size:13px;color:var(--sub);text-align:center;margin-bottom:8px;">สัดส่วนการลงทุน (Asset Allocation)</h3>
       <canvas id="pieChart" style="max-height:240px;"></canvas>
-    </div>
-
-    <hr style="border:none;border-top:1px dashed var(--border);margin:20px 0;">
-
-    <!-- Line Chart -->
-    <div class="chart-container">
-      <h3 style="font-size:13px;color:var(--sub);text-align:center;margin-bottom:8px;">2. แนวโน้มการเปลี่ยนแปลงมูลค่าพอร์ต</h3>
-      <canvas id="lineChart" style="max-height:220px;"></canvas>
     </div>
   </div>
 </main>
@@ -105,7 +97,6 @@ let FUNDS = [];
 let searchTimeout = null;
 
 let pieChartInstance = null;
-let lineChartInstance = null;
 
 const chartColors = [
   '#5b5bd6', '#00b894', '#ff7675', '#fdcb6e', '#0984e3',
@@ -250,7 +241,6 @@ function updateSummary(){
     const costBaht = (pct / 100) * CAPITAL;
 
     if (h && h.units > 0 && f && f.nav) {
-      // คำนวณจากหน่วยลงทุนที่บันทึกจริง x NAV ล่าสุด
       currentVal += h.units * f.nav;
     } else {
       currentVal += costBaht;
@@ -262,12 +252,11 @@ function updateSummary(){
   retElem.textContent = (retPct >= 0 ? "+" : "") + retPct.toFixed(2) + "%";
   retElem.style.color = retPct >= 0 ? 'var(--accent)' : 'var(--danger)';
 
-  // วาดกราฟใหม่เมื่อมีการเปลี่ยนแปลงสัดส่วน
-  renderCharts(currentVal);
+  renderCharts();
 }
 
-// 📊 ฟังก์ชันวาด Pie Chart และ Line Chart
-function renderCharts(currentVal = CAPITAL){
+// 📊 ฟังก์ชันวาด Pie Chart (สัดส่วนการลงทุน)
+function renderCharts(){
   const entries = Object.entries(portfolio).filter(([, pct]) => pct > 0);
   if(entries.length === 0) {
     document.getElementById('analyticsCard').style.display = 'none';
@@ -279,7 +268,7 @@ function renderCharts(currentVal = CAPITAL){
   const labels = entries.map(([code]) => code);
   const dataPct = entries.map(([, pct]) => pct);
 
-  // 1. วาด Pie Chart (สัดส่วน)
+  // วาด Pie Chart (สัดส่วน)
   const ctxPie = document.getElementById('pieChart').getContext('2d');
   if (pieChartInstance) pieChartInstance.destroy();
 
@@ -305,54 +294,6 @@ function renderCharts(currentVal = CAPITAL){
       }
     }
   });
-
-  // 2. วาด Line Chart (ปรับตามผลตอบแทนจริงเทียบกับเงินต้น)
-  const ctxLine = document.getElementById('lineChart').getContext('2d');
-  if (lineChartInstance) lineChartInstance.destroy();
-
-  const timeLabels = ['เดือน -5', 'เดือน -4', 'เดือน -3', 'เดือน -2', 'เดือน -1', 'ปัจจุบัน'];
-  const diff = currentVal - CAPITAL;
-  
-  // จำลองเส้นทางกราฟให้สอดคล้องกับจุดสิ้นสุดปัจจุบัน
-  const mockTrend = [
-    1000000,
-    Math.round(1000000 + diff * 0.15),
-    Math.round(1000000 + diff * 0.35 - 3000),
-    Math.round(1000000 + diff * 0.60),
-    Math.round(1000000 + diff * 0.80 + 1500),
-    Math.round(currentVal)
-  ];
-
-  const isProfit = currentVal >= CAPITAL;
-
-  lineChartInstance = new Chart(ctxLine, {
-    type: 'line',
-    data: {
-      labels: timeLabels,
-      datasets: [{
-        label: 'มูลค่าพอร์ต (บาท)',
-        data: mockTrend,
-        borderColor: isProfit ? '#00b894' : '#e74c3c',
-        backgroundColor: isProfit ? 'rgba(0, 184, 148, 0.1)' : 'rgba(231, 76, 60, 0.1)',
-        fill: true,
-        tension: 0.3,
-        pointRadius: 4
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { display: false }
-      },
-      scales: {
-        y: {
-          ticks: {
-            callback: (value) => value.toLocaleString('en-US') + ' ฿'
-          }
-        }
-      }
-    }
-  });
 }
 
 // ปุ่มบันทึกพอร์ต
@@ -360,7 +301,6 @@ document.getElementById('submitBtn').onclick = async () => {
   const totalPct = Object.values(portfolio).reduce((s,a)=>s+a,0);
   if(totalPct !== 100){ alert("สัดส่วนรวมต้องเท่ากับ 100% พอดี (ปัจจุบัน " + totalPct + "%)"); return; }
 
-  // ดึง NAV ล่าสุดจาก Supabase โดยตรงก่อนบันทึก
   const codes = Object.keys(portfolio);
   const { data: currentNavs } = await supabase.from('latest_nav').select('fund_code, nav').in('fund_code', codes);
   const navMap = Object.fromEntries((currentNavs || []).map(n => [n.fund_code, n.nav]));
@@ -385,7 +325,6 @@ document.getElementById('submitBtn').onclick = async () => {
 
   alert("✅ บันทึกพอร์ตฝึกซ้อมเรียบร้อย!");
   
-  // โหลดข้อมูลพอร์ตใหม่เพื่อซิงค์ข้อมูลหน่วยลงทุน
   await loadPortfolio();
   document.getElementById('analyticsCard').scrollIntoView({ behavior: 'smooth' });
 };
