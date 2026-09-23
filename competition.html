@@ -26,6 +26,7 @@
   .you{background:rgba(0,184,148,.1);border-radius:8px;font-weight:bold;}
   .summary-box{background:rgba(0,184,148,.08);padding:12px;border-radius:10px;margin-top:10px;}
   .loading{color:var(--sub);text-align:center;padding:20px;}
+  .deadline-banner{background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;padding:10px 12px;border-radius:10px;font-size:12px;margin-bottom:12px;text-align:center;font-weight:500;}
 </style>
 </head>
 <body>
@@ -39,11 +40,17 @@
 </div>
 <main>
   <section id="tab-build">
-    <div class="card">
+    <!-- แถบแจ้งเตือนวันหมดเขต -->
+    <div class="deadline-banner" id="deadlineBanner">
+      ⏳ แก้ไขพอร์ตได้ถึง: <b>วันศุกร์ที่ 25 ก.ย. 2026 เวลา 23:59 น.</b>
+    </div>
+
+    <div class="card" id="searchCard">
       <h2 style="font-size:14px;">เลือกกองทุนแข่งขัน</h2>
       <input type="text" id="search" placeholder="พิมพ์รหัสหรือชื่อกองทุน..." style="width:100%;padding:9px;border-radius:8px;border:1px solid var(--border);">
       <div id="fundList" style="margin-top:8px;max-height:200px;overflow-y:auto;"></div>
     </div>
+
     <div class="card">
       <h2 style="font-size:14px;">พอร์ตแข่งขัน (วงเงินเทียบเท่า 1,000,000 บาท)</h2>
       <table>
@@ -81,13 +88,16 @@
 <script type="module">
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
-// ใส่ LIFF ID โหมดแข่งขันของคุณตรงนี้
+// ⚠️ ใส่ LIFF ID โหมดแข่งขันของคุณตรงนี้
 const LIFF_ID = "2011677026-026ezmgt"; 
 const SUPABASE_URL = "https://njtxoohmhhvskxjqovps.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5qdHhvb2htaGh2c2t4anFvdnBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5OTE2MzcsImV4cCI6MjEwNTU2NzYzN30.54Cea7ALG0-xzieBLUl0B0WOIcsIoRL1hoaDhc846wA";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const CAPITAL = 1000000; 
+
+// 🎯 วันหมดเขตแก้ไขพอร์ต (ศุกร์ที่ 25 ก.ย. 2026 เวลา 23:59:59 น.)
+const DEADLINE = new Date("2026-09-25T23:59:59+07:00");
 
 let lineUserId = null, nickname = "";
 let portfolio = {}; // fund_code -> pct
@@ -96,6 +106,37 @@ let searchTimeout = null;
 
 function fmt(n){ return Math.round(n).toLocaleString('en-US'); }
 function pctFmt(n){ return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
+
+// ฟังก์ชันตรวจสอบและล็อคการแก้ไขพอร์ตเมื่อหมดเวลา
+function checkDeadline() {
+  const isExpired = new Date() > DEADLINE;
+  const submitBtn = document.getElementById('submitBtn');
+  const banner = document.getElementById('deadlineBanner');
+  const searchCard = document.getElementById('searchCard');
+  
+  if (isExpired) {
+    if (banner) {
+      banner.style.background = '#f8d7da';
+      banner.style.color = '#721c24';
+      banner.style.borderColor = '#f5c6cb';
+      banner.innerHTML = '🔒 <b>หมดเวลาแก้ไขพอร์ตแข่งขันแล้ว</b> (สิ้นสุดเมื่อ 25 ก.ย. 2026 เวลา 23:59 น.)';
+    }
+    if (searchCard) searchCard.style.display = 'none';
+
+    submitBtn.disabled = true;
+    submitBtn.style.background = '#9ca3af';
+    submitBtn.style.cursor = 'not-allowed';
+    submitBtn.textContent = '🔒 หมดเวลาแก้ไขพอร์ตแข่งขันแล้ว';
+
+    document.querySelectorAll('#portfolioBody input').forEach(input => {
+      input.disabled = true;
+    });
+
+    document.querySelectorAll('#portfolioBody .btn.small').forEach(btn => {
+      btn.style.display = 'none';
+    });
+  }
+}
 
 async function boot(){
   await liff.init({ liffId: LIFF_ID });
@@ -110,6 +151,7 @@ async function boot(){
   loadFunds();
   await loadPortfolio();
   await loadLeaderboard();
+  checkDeadline();
 }
 
 function loadFunds(){
@@ -124,6 +166,7 @@ document.getElementById('search').oninput = (e) => {
 };
 
 async function searchFunds(query) {
+  if (new Date() > DEADLINE) return;
   const list = document.getElementById('fundList');
   list.innerHTML = '<div class="loading">กำลังค้นหา...</div>';
   const f = query.toUpperCase();
@@ -143,6 +186,7 @@ async function searchFunds(query) {
 
   list.querySelectorAll('[data-add]').forEach(b => {
     b.onclick = () => {
+      if (new Date() > DEADLINE) return;
       const code = b.dataset.add;
       const navVal = b.dataset.nav ? parseFloat(b.dataset.nav) : null;
       portfolio[code] ??= 0;
@@ -175,6 +219,7 @@ function renderPortfolio(){
   body.querySelectorAll('[data-pct]').forEach(inp => inp.oninput = () => { portfolio[inp.dataset.pct] = Number(inp.value)||0; updateSummary(); });
   body.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { delete portfolio[b.dataset.del]; renderPortfolio(); });
   updateSummary();
+  checkDeadline();
 }
 
 function updateSummary(){
@@ -187,6 +232,11 @@ function updateSummary(){
 }
 
 document.getElementById('submitBtn').onclick = async () => {
+  if (new Date() > DEADLINE) {
+    alert("🔒 ไม่สามารถแก้ไขพอร์ตได้แล้ว เนื่องจากเลยกำหนดวันศุกร์ที่ 25 กันยายน 2026");
+    return;
+  }
+
   const totalPct = Object.values(portfolio).reduce((s,a)=>s+a,0);
   if(totalPct !== 100){ alert("สัดส่วนรวมต้องเท่ากับ 100% พอดี (ปัจจุบัน " + totalPct + "%)"); return; }
 
