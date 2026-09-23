@@ -77,7 +77,7 @@
       <button class="btn" id="submitBtn" style="width:100%;margin-top:12px;">🏆 ส่งพอร์ตเข้าร่วมแข่งขัน</button>
     </div>
 
-    <!-- ส่วนแสดง Pie Chart และวิเคราะห์รายกองทุน -->
+    <!-- ส่วนแสดง Pie Chart และรายละเอียดรายกองทุน -->
     <div class="card" id="analyticsCard" style="display:none;">
       <h2 style="font-size:15px;color:var(--accent);margin-bottom:15px;">📊 สรุปสัดส่วนและผลตอบแทนรายกองทุน</h2>
       
@@ -87,7 +87,7 @@
         <canvas id="pieChart" style="max-height:240px;"></canvas>
       </div>
 
-      <!-- ตารางรายละเอียดหุ้น/กองทุนแต่ละตัว -->
+      <!-- ตารางรายละเอียด -->
       <div style="margin-top:20px;overflow-x:auto;">
         <h3 style="font-size:13px;color:var(--sub);margin-bottom:8px;">รายละเอียดรายกองทุน</h3>
         <table>
@@ -124,24 +124,20 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const CAPITAL = 1000000; 
-
 const DEADLINE = new Date("2026-09-25T23:59:59+07:00");
 
 let lineUserId = null, nickname = "";
-let portfolio = {}; // fund_code -> pct
-let holdingsRawData = []; // เก็บข้อมูล holdings ทั้งหมดที่ดึงมา
-let navMapGlobal = {}; // เก็บข้อมูล NAV ล่าสุด
+let portfolio = {}; 
+let holdingsRawData = []; 
+let navMapGlobal = {}; 
 let FUNDS = [];
 let searchTimeout = null;
 let pieChartInstance = null;
 
-const chartColors = [
-  '#00b894', '#0984e3', '#6c5ce7', '#fdcb6e', '#e17055',
-  '#e84393', '#00cec9', '#d63031', '#5b5bd6', '#2bcbba'
-];
+const chartColors = ['#00b894', '#0984e3', '#6c5ce7', '#fdcb6e', '#e17055', '#e84393', '#00cec9', '#d63031', '#5b5bd6', '#2bcbba'];
 
-function fmt(n){ return Math.round(n).toLocaleString('en-US'); }
-function pctFmt(n){ return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
+function fmt(n){ return Math.round(n||0).toLocaleString('en-US'); }
+function pctFmt(n){ return (n >= 0 ? "+" : "") + (n||0).toFixed(2) + "%"; }
 
 function checkDeadline() {
   const isExpired = new Date() > DEADLINE;
@@ -151,25 +147,17 @@ function checkDeadline() {
   
   if (isExpired) {
     if (banner) {
-      banner.style.background = '#f8d7da';
-      banner.style.color = '#721c24';
-      banner.style.borderColor = '#f5c6cb';
+      banner.style.background = '#f8d7da'; banner.style.color = '#721c24'; banner.style.borderColor = '#f5c6cb';
       banner.innerHTML = '🔒 <b>หมดเวลาแก้ไขพอร์ตแข่งขันแล้ว</b> (สิ้นสุดเมื่อ 25 ก.ย. 2026 เวลา 23:59 น.)';
     }
     if (searchCard) searchCard.style.display = 'none';
 
-    submitBtn.disabled = true;
-    submitBtn.style.background = '#9ca3af';
-    submitBtn.style.cursor = 'not-allowed';
-    submitBtn.textContent = '🔒 หมดเวลาแก้ไขพอร์ตแข่งขันแล้ว';
-
-    document.querySelectorAll('#portfolioBody input').forEach(input => {
-      input.disabled = true;
-    });
-
-    document.querySelectorAll('#portfolioBody .btn.small').forEach(btn => {
-      btn.style.display = 'none';
-    });
+    if (submitBtn) {
+      submitBtn.disabled = true; submitBtn.style.background = '#9ca3af'; submitBtn.style.cursor = 'not-allowed';
+      submitBtn.textContent = '🔒 หมดเวลาแก้ไขพอร์ตแข่งขันแล้ว';
+    }
+    document.querySelectorAll('#portfolioBody input').forEach(i => i.disabled = true);
+    document.querySelectorAll('#portfolioBody .btn.small').forEach(b => b.style.display = 'none');
   }
 }
 
@@ -177,21 +165,30 @@ async function boot(){
   try {
     if (window.liff) {
       await liff.init({ liffId: LIFF_ID });
-      if(!liff.isLoggedIn()){ liff.login(); return; }
-
-      const profile = await liff.getProfile();
-      lineUserId = profile.userId;
-      nickname = profile.displayName;
+      if (liff.isLoggedIn()) {
+        const profile = await liff.getProfile();
+        lineUserId = profile.userId;
+        nickname = profile.displayName;
+      } else {
+        let localId = localStorage.getItem('demo_user_id') || ('user_' + Math.floor(Math.random()*10000));
+        localStorage.setItem('demo_user_id', localId);
+        lineUserId = localId;
+        nickname = "ผู้เล่นทดสอบ (" + localId + ")";
+      }
     }
   } catch(e) {
-    console.warn("LIFF initialization fallback:", e);
-    lineUserId = "test_user_demo";
-    nickname = "ผู้เล่นทดสอบ";
+    let localId = localStorage.getItem('demo_user_id') || ('user_' + Math.floor(Math.random()*10000));
+    localStorage.setItem('demo_user_id', localId);
+    lineUserId = localId;
+    nickname = "ผู้เล่น (" + localId + ")";
   }
 
   document.getElementById('whoami').textContent = "สวัสดีคุณ " + nickname;
 
-  await supabase.from('players').upsert({ line_user_id: lineUserId, nickname }, { onConflict: 'line_user_id' });
+  if (lineUserId) {
+    await supabase.from('players').upsert({ line_user_id: lineUserId, nickname }, { onConflict: 'line_user_id' });
+  }
+
   loadFunds();
   await loadPortfolio();
   await loadLeaderboard();
@@ -215,19 +212,23 @@ async function searchFunds(query) {
   list.innerHTML = '<div class="loading">กำลังค้นหา...</div>';
   const f = query.toUpperCase();
 
-  const { data: funds } = await supabase.from('funds').select('code, name').or(`code.ilike.%${f}%,name.ilike.%${f}%`).limit(20);
-  if (!funds || funds.length === 0) { list.innerHTML = '<div class="loading">ไม่พบกองทุน</div>'; return; }
+  const { data: funds, error } = await supabase.from('funds').select('code, name').or(`code.ilike.%${f}%,name.ilike.%${f}%`).limit(20);
+  if (error || !funds || funds.length === 0) { list.innerHTML = '<div class="loading">ไม่พบกองทุน</div>'; return; }
 
   const fundCodes = funds.map(x => x.code);
   const { data: navs } = await supabase.from('latest_nav').select('fund_code, nav, change_pct').in('fund_code', fundCodes);
   
   (navs || []).forEach(n => { navMapGlobal[n.fund_code] = n; });
 
-  list.innerHTML = funds.map(fund => `
-    <div class="fund-item">
-      <div><b>${fund.code}</b> · NAV ${navMapGlobal[fund.code]?.nav ?? '-'}<br><span style="color:var(--sub);font-size:11px;">${fund.name}</span></div>
-      <button class="btn small" style="background:var(--accent)" data-add="${fund.code}" data-nav="${navMapGlobal[fund.code]?.nav ?? ''}">+ เลือก</button>
-    </div>`).join('');
+  list.innerHTML = funds.map(fund => {
+    const navVal = navMapGlobal[fund.code]?.nav;
+    const navDisp = (navVal !== undefined && navVal !== null) ? navVal : '-';
+    return `
+      <div class="fund-item">
+        <div><b>${fund.code}</b> · NAV ${navDisp}<br><span style="color:var(--sub);font-size:11px;">${fund.name}</span></div>
+        <button class="btn small" style="background:var(--accent)" data-add="${fund.code}" data-nav="${navVal ?? ''}">+ เลือก</button>
+      </div>`;
+  }).join('');
 
   list.querySelectorAll('[data-add]').forEach(b => {
     b.onclick = () => {
@@ -242,6 +243,7 @@ async function searchFunds(query) {
 }
 
 async function loadPortfolio(){
+  if (!lineUserId) return;
   const { data } = await supabase.from('competition_holdings').select('fund_code, pct, initial_nav').eq('player_line_user_id', lineUserId);
   holdingsRawData = data || [];
   portfolio = Object.fromEntries(holdingsRawData.map(h => [h.fund_code, Number(h.pct)]));
@@ -292,7 +294,6 @@ function updateSummary(){
   renderAnalytics();
 }
 
-// 📊 ฟังก์ชันวาด Pie Chart และตารางวิเคราะห์รายกองทุน
 function renderAnalytics(){
   const entries = Object.entries(portfolio).filter(([, pct]) => pct > 0);
   const analyticsCard = document.getElementById('analyticsCard');
@@ -342,7 +343,6 @@ function renderAnalytics(){
 
   document.getElementById('fundDetailBody').innerHTML = tableRows.join('');
 
-  // วาด Pie Chart (Asset Allocation)
   const ctxPie = document.getElementById('pieChart').getContext('2d');
   if (pieChartInstance) pieChartInstance.destroy();
 
@@ -371,10 +371,8 @@ function renderAnalytics(){
 }
 
 document.getElementById('submitBtn').onclick = async () => {
-  if (new Date() > DEADLINE) {
-    alert("🔒 ไม่สามารถแก้ไขพอร์ตได้แล้ว เนื่องจากเลยกำหนดวันศุกร์ที่ 25 กันยายน 2026");
-    return;
-  }
+  if (!lineUserId) { alert("⚠️ ไม่พบข้อมูลผู้ใช้ กรุณารีเฟรชหน้าแล้วลองใหม่"); return; }
+  if (new Date() > DEADLINE) { alert("🔒 ไม่สามารถแก้ไขพอร์ตได้แล้ว"); return; }
 
   const totalPct = Object.values(portfolio).reduce((s,a)=>s+a,0);
   if(totalPct !== 100){ alert("สัดส่วนรวมต้องเท่ากับ 100% พอดี (ปัจจุบัน " + totalPct + "%)"); return; }
@@ -397,9 +395,9 @@ document.getElementById('submitBtn').onclick = async () => {
   const { error } = await supabase.from('competition_holdings').insert(rows);
   if(error){ alert("บันทึกไม่สำเร็จ: " + error.message); return; }
   
-  alert("บันทึกพอร์ตแข่งขันเรียบร้อย!");
+  alert("✅ บันทึกพอร์ตแข่งขันเรียบร้อย!");
   await loadPortfolio();
-  loadLeaderboard();
+  await loadLeaderboard();
 };
 
 async function loadLeaderboard(){
@@ -416,7 +414,7 @@ async function loadLeaderboard(){
 
   const rows = (allPlayers||[]).map(p => {
     const holdings = (allHoldings||[]).filter(h => h.player_line_user_id === p.line_user_id);
-    if(holdings.length === 0) return null;
+    if(!holdings || holdings.length === 0) return null;
 
     let currentVal = 0;
     holdings.forEach(h => {
@@ -438,6 +436,7 @@ async function loadLeaderboard(){
     const retPct = ((currentVal - CAPITAL) / CAPITAL) * 100;
 
     return {
+      id: p.line_user_id,
       name: p.nickname,
       currentVal: currentVal,
       retPct: retPct
@@ -445,7 +444,7 @@ async function loadLeaderboard(){
   }).filter(Boolean).sort((a,b) => b.retPct - a.retPct);
 
   box.innerHTML = rows.length ? rows.map((r,i) => `
-    <div class="rank-row ${r.name===nickname?'you':''}">
+    <div class="rank-row ${r.id===lineUserId?'you':''}">
       <div><b>#${i+1}</b> ${r.name}</div>
       <div class="right">
         <div><b>${fmt(r.currentVal)} บาท</b></div>
