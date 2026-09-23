@@ -54,7 +54,7 @@ async function getAllFundsMapping() {
 }
 
 async function updateAllNAV() {
-  console.log('1. ดึงรายชื่อกองทุนทั้งหมดจาก Supabase (เพื่อจับคู่ proj_id -> fund_code)...');
+  console.log('1. ดึงรายชื่อกองทุนทั้งหมดจาก Supabase...');
   const projIdToCodeMap = await getAllFundsMapping();
   console.log(`โหลดข้อมูลจับคู่สำเร็จทั้งหมด ${projIdToCodeMap.size} กองทุน`);
 
@@ -62,18 +62,20 @@ async function updateAllNAV() {
     throw new Error('ไม่พบข้อมูลกองทุนในตาราง funds');
   }
 
-  // กำหนดวันที่เริ่มต้นเป็นวันแรกของปีปัจจุบัน (เช่น 2026-01-01)
-  const currentYear = new Date().getFullYear();
-  const startNavDate = `${currentYear}-01-01`;
+  // คำนวณวันที่ย้อนหลัง 7 วันจากปัจจุบัน (ป้องกันติดวันหยุดเสาร์-อาทิตย์)
+  const today = new Date();
+  const pastSevenDays = new Date(today);
+  pastSevenDays.setDate(today.getDate() - 7);
+  const startNavDate = pastSevenDays.toISOString().split('T')[0];
 
-  console.log(`\n2. ดึงข้อมูล NAV เฉพาะของปีปัจจุบัน (${currentYear}) ตั้งแต่วันที่ ${startNavDate} จาก SEC API...`);
+  console.log(`\n2. ดึงข้อมูล NAV ล่าสุด (ย้อนหลังไม่เกิน 7 วัน ตั้งแต่วันที่ ${startNavDate}) จาก SEC API...`);
 
   const navRecordsMap = new Map();
   let nextCursor = '';
   let pageNum = 1;
 
   do {
-    // ส่ง start_nav_date เพื่อกรองข้อมูลเฉพาะของปีปัจจุบัน
+    // ดึงเฉพาะ 7 วันล่าสุด
     let url = `https://api.sec.or.th/v2/fund/daily-info/nav?page_size=100&start_nav_date=${startNavDate}`;
     if (nextCursor) {
       url += `&next_cursor=${encodeURIComponent(nextCursor)}`;
@@ -109,7 +111,6 @@ async function updateAllNAV() {
       const navDate = item.nav_date || item.as_of_date || item.date;
       const navVal = parseFloat(item.last_val ?? item.net_asset_value ?? item.nav);
 
-      // กรองซ้ำให้มั่นใจว่าเป็นวันที่ตั้งแต่ต้นปีปัจจุบันเป็นต้นไป
       if (navDate && navDate >= startNavDate && !isNaN(navVal)) {
         const key = `${code}_${navDate}`;
         if (!navRecordsMap.has(key)) {
@@ -123,7 +124,7 @@ async function updateAllNAV() {
       }
     });
 
-    console.log(`- รอบที่ ${pageNum}: รับข้อมูลมา ${items.length} รายการ (บันทึก NAV ของปี ${currentYear} ได้ ${matchedInThisPage} รายการ)`);
+    console.log(`- รอบที่ ${pageNum}: รับข้อมูลมา ${items.length} รายการ (บันทึก NAV สำเร็จ ${matchedInThisPage} รายการ)`);
     pageNum++;
 
     if (items.length === 0 || (nextCursor && nextCursor === prevCursor)) {
@@ -133,14 +134,14 @@ async function updateAllNAV() {
   } while (nextCursor);
 
   const navRecords = Array.from(navRecordsMap.values());
-  console.log(`\nสรุป: รวบรวมข้อมูล NAV เฉพาะปี ${currentYear} ได้รวม ${navRecords.length} รายการ`);
+  console.log(`\nสรุป: รวบรวมข้อมูล NAV ล่าสุดได้รวม ${navRecords.length} รายการ`);
 
   if (navRecords.length === 0) {
-    console.log('ไม่พบข้อมูล NAV ของปีนี้ที่ต้องบันทึก');
+    console.log('ไม่พบข้อมูล NAV ล่าสุดที่ต้องบันทึก');
     return;
   }
 
-  // 3. บันทึกลง Supabase ตาราง nav_history
+  // 3. บันทึกลง Supabase
   console.log('\n3. บันทึกข้อมูลลงตาราง nav_history ใน Supabase...');
   const chunkSize = 500;
   let insertedCount = 0;
