@@ -1,9 +1,18 @@
 name: Update Daily NAV
 
 on:
-  workflow_dispatch: {}
   schedule:
     - cron: '0 11 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'เลือกโหมดการดึงข้อมูล'
+        required: true
+        default: 'daily'
+        type: choice
+        options:
+          - daily
+          - ytd
 
 jobs:
   update-nav:
@@ -28,7 +37,14 @@ jobs:
           SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
 
       - name: Run Update NAV Script
-        run: node scripts/update-nav.mjs
+        run: |
+          if [ "${{ inputs.mode }}" = "ytd" ]; then
+            echo "🚀 สั่งรันโหมด YTD: ดึงข้อมูลย้อนหลังตั้งแต่ต้นปี..."
+            node scripts/update-nav.mjs --ytd
+          else
+            echo "📅 สั่งรันโหมด Daily: ดึงข้อมูลอัปเดตประจำวัน..."
+            node scripts/update-nav.mjs
+          fi
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
