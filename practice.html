@@ -59,8 +59,9 @@
         <span>สัดส่วนรวม: <b id="totalPct">0%</b></span>
         <span>มูลค่าต้นทุนรวม: <b id="totalValue">0</b> บาท</span>
       </div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:6px;">
-        <span>ผลตอบแทนรวมปัจจุบัน: <b id="totalReturn" style="color:var(--accent);">0.00%</b></span>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:8px;border-top:1px dashed var(--border);padding-top:8px;">
+        <span>มูลค่าพอร์ตปัจจุบัน: <b id="currentTotalValue">0</b> บาท</span>
+        <span>ผลตอบแทนรวม: <b id="totalReturn" style="color:var(--accent);">+0.00% (0 บาท)</b></span>
       </div>
     </div>
 
@@ -103,7 +104,7 @@ const chartColors = [
   '#e84393', '#6c5ce7', '#00cec9', '#d63031', '#e17055'
 ];
 
-function fmt(n){ return Math.round(n).toLocaleString('en-US'); }
+function fmt(n){ return Math.round(n || 0).toLocaleString('en-US'); }
 
 async function boot(){
   try {
@@ -247,10 +248,17 @@ function updateSummary(){
     }
   });
 
-  const retPct = totalBaht > 0 ? ((currentVal - totalBaht) / totalBaht) * 100 : 0;
+  const profitBaht = currentVal - totalBaht;
+  const retPct = totalBaht > 0 ? (profitBaht / totalBaht) * 100 : 0;
+
+  // อัปเดตมูลค่าพอร์ตปัจจุบัน (บาท)
+  document.getElementById('currentTotalValue').textContent = fmt(currentVal);
+
+  // อัปเดตผลตอบแทนรวม (% และ บาท)
   const retElem = document.getElementById('totalReturn');
-  retElem.textContent = (retPct >= 0 ? "+" : "") + retPct.toFixed(2) + "%";
-  retElem.style.color = retPct >= 0 ? 'var(--accent)' : 'var(--danger)';
+  const sign = profitBaht >= 0 ? "+" : "";
+  retElem.textContent = `${sign}${retPct.toFixed(2)}% (${sign}${fmt(profitBaht)} บาท)`;
+  retElem.style.color = profitBaht >= 0 ? 'var(--accent)' : 'var(--danger)';
 
   renderCharts();
 }
