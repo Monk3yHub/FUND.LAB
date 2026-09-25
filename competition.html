@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Fund Challenge - โหมดแข่งขัน</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
   :root{ --bg:#f6f7fb; --card:#fff; --text:#1a1d29; --sub:#6b7280; --accent:#00b894; --danger:#e74c3c; --border:#e5e7eb; }
   *{box-sizing:border-box;}
@@ -27,6 +28,7 @@
   .summary-box{background:rgba(0,184,148,.08);padding:12px;border-radius:10px;margin-top:10px;}
   .loading{color:var(--sub);text-align:center;padding:20px;}
   .deadline-banner{background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;padding:10px 12px;border-radius:10px;font-size:12px;margin-bottom:12px;text-align:center;font-weight:500;}
+  .section-title{font-size:13px;font-weight:bold;margin:14px 0 8px;color:var(--text);border-left:3px solid var(--accent);padding-left:6px;}
 </style>
 </head>
 <body>
@@ -76,7 +78,28 @@
         </div>
       </div>
 
-      <button class="btn" id="submitBtn" style="width:100%;margin-top:12px;">🏆 ส่งพอร์ตเข้าร่วมแข่งขัน</button>
+      <!-- ส่วนแสดง Pie Chart และ ตารางสรุปผลตอบแทนรายกองทุน -->
+      <div id="chartSection" style="display:none;margin-top:10px;">
+        <div class="section-title">📊 สัดส่วนพอร์ตการลงทุน (Pie Chart)</div>
+        <div style="max-width:220px;margin:10px auto;">
+          <canvas id="portfolioChart"></canvas>
+        </div>
+
+        <div class="section-title">📋 สรุปผลตอบแทนรายกองทุน</div>
+        <table>
+          <thead>
+            <tr>
+              <th>กองทุน</th>
+              <th class="right">เงินต้น</th>
+              <th class="right">เพิ่ม/ลด</th>
+              <th class="right">มูลค่าปัจจุบัน</th>
+            </tr>
+          </thead>
+          <tbody id="fundSummaryBody"></tbody>
+        </table>
+      </div>
+
+      <button class="btn" id="submitBtn" style="width:100%;margin-top:14px;">🏆 ส่งพอร์ตเข้าร่วมแข่งขัน</button>
     </div>
   </section>
 
@@ -106,6 +129,7 @@ let lineUserId = null, nickname = "";
 let portfolio = {}; // fund_code -> pct
 let FUNDS = [];
 let searchTimeout = null;
+let chartInstance = null;
 
 function fmt(n){ return Math.round(n||0).toLocaleString('en-US'); }
 function pctFmt(n){ return (n >= 0 ? "+" : "") + (n||0).toFixed(2) + "%"; }
@@ -232,11 +256,13 @@ async function updateSummary(){
   document.getElementById('totalPct').style.color = totalPct !== 100 ? 'var(--danger)' : 'var(--accent)';
   document.getElementById('totalValue').textContent = fmt(totalBaht);
 
-  // คำนวณมูลค่าพอร์ตปัจจุบันตาม % NAV ของกองทุนที่เลือก
   const codes = Object.keys(portfolio).filter(c => portfolio[c] > 0);
   let currentVal = 0;
+  const chartSection = document.getElementById('chartSection');
+  const summaryBody = document.getElementById('fundSummaryBody');
 
   if (codes.length > 0) {
+    chartSection.style.display = 'block';
     const { data: navs } = await supabase.from('latest_nav').select('*').in('fund_code', codes);
     const navMap = {};
     (navs || []).forEach(n => {
@@ -244,15 +270,39 @@ async function updateSummary(){
       if (c) navMap[c] = n;
     });
 
+    const labels = [];
+    const chartData = [];
+    let summaryHtml = '';
+
     codes.forEach(code => {
       const pct = portfolio[code];
       const bahtCost = (pct / 100) * CAPITAL;
       const nData = navMap[code] || {};
       const changePct = Number(nData.change_pct ?? nData.change ?? nData.nav_change ?? 0);
-      currentVal += bahtCost * (1 + changePct / 100);
+      const fundCurrentVal = bahtCost * (1 + changePct / 100);
+      
+      currentVal += fundCurrentVal;
+      labels.push(code);
+      chartData.push(pct);
+
+      const color = changePct >= 0 ? 'var(--accent)' : 'var(--danger)';
+      const sign = changePct >= 0 ? '+' : '';
+
+      summaryHtml += `
+        <tr>
+          <td><b>${code}</b> <span style="font-size:11px;color:var(--sub);">(${pct}%)</span></td>
+          <td class="right">${fmt(bahtCost)}</td>
+          <td class="right" style="color:${color};font-weight:600;">${sign}${changePct.toFixed(2)}%</td>
+          <td class="right"><b>${fmt(fundCurrentVal)}</b></td>
+        </tr>`;
     });
+
+    summaryBody.innerHTML = summaryHtml;
+    renderPieChart(labels, chartData);
+
   } else {
     currentVal = totalBaht;
+    chartSection.style.display = 'none';
   }
 
   const profitBaht = currentVal - totalBaht;
@@ -263,6 +313,35 @@ async function updateSummary(){
   const sign = profitBaht >= 0 ? "+" : "";
   retElem.textContent = `${sign}${retPct.toFixed(2)}% (${sign}${fmt(profitBaht)} บาท)`;
   retElem.style.color = profitBaht >= 0 ? 'var(--accent)' : 'var(--danger)';
+}
+
+function renderPieChart(labels, dataValues) {
+  const ctx = document.getElementById('portfolioChart').getContext('2d');
+  if (chartInstance) {
+    chartInstance.destroy();
+  }
+  chartInstance = new Chart(ctx, {
+    type: 'pie',
+    data: {
+      labels: labels,
+      datasets: [{
+        data: dataValues,
+        backgroundColor: [
+          '#00b894', '#0984e3', '#6c5ce7', '#fdcb6e', '#e17055',
+          '#d63031', '#e84393', '#00cec9', '#2d3436', '#81ecec'
+        ]
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { font: { size: 11 } }
+        }
+      }
+    }
+  });
 }
 
 document.getElementById('submitBtn').onclick = async () => {
@@ -313,7 +392,6 @@ async function loadLeaderboard(){
     holdings.forEach(h => {
       const bahtCost = (Number(h.pct) / 100) * CAPITAL;
       const nData = navMap[h.fund_code] || {};
-      // ดึง % การเปลี่ยนแปลงของ NAV มาคำนวณกำไร/ขาดทุนตามจริง
       const changePct = Number(nData.change_pct ?? nData.change ?? nData.nav_change ?? 0);
       currentVal += bahtCost * (1 + changePct / 100);
     });
