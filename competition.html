@@ -70,6 +70,10 @@
           <span>สัดส่วนรวม: <b id="totalPct">0%</b></span>
           <span>มูลค่าเริ่มต้น: <b id="totalValue">0</b> บาท</span>
         </div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:8px;border-top:1px dashed var(--border);padding-top:8px;">
+          <span>มูลค่าพอร์ตปัจจุบัน: <b id="currentTotalValue">0</b> บาท</span>
+          <span>ผลตอบแทนรวม: <b id="totalReturn" style="color:var(--accent);">+0.00% (0 บาท)</b></span>
+        </div>
       </div>
 
       <button class="btn" id="submitBtn" style="width:100%;margin-top:12px;">🏆 ส่งพอร์ตเข้าร่วมแข่งขัน</button>
@@ -88,7 +92,6 @@
 <script type="module">
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
-// ⚠️ ใส่ LIFF ID โหมดแข่งขันของคุณตรงนี้
 const LIFF_ID = "2011677026-026ezmgt"; 
 const SUPABASE_URL = "https://njtxoohmhhvskxjqovps.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5qdHhvb2htaGh2c2t4anFvdnBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5OTE2MzcsImV4cCI6MjEwNTU2NzYzN30.54Cea7ALG0-xzieBLUl0B0WOIcsIoRL1hoaDhc846wA";
@@ -104,10 +107,9 @@ let portfolio = {}; // fund_code -> pct
 let FUNDS = [];
 let searchTimeout = null;
 
-function fmt(n){ return Math.round(n).toLocaleString('en-US'); }
-function pctFmt(n){ return (n >= 0 ? "+" : "") + n.toFixed(2) + "%"; }
+function fmt(n){ return Math.round(n||0).toLocaleString('en-US'); }
+function pctFmt(n){ return (n >= 0 ? "+" : "") + (n||0).toFixed(2) + "%"; }
 
-// ฟังก์ชันตรวจสอบและล็อคการแก้ไขพอร์ตเมื่อหมดเวลา
 function checkDeadline() {
   const isExpired = new Date() > DEADLINE;
   const submitBtn = document.getElementById('submitBtn');
@@ -222,13 +224,45 @@ function renderPortfolio(){
   checkDeadline();
 }
 
-function updateSummary(){
+async function updateSummary(){
   const totalPct = Object.values(portfolio).reduce((s,a)=>s+a,0);
   const totalBaht = (totalPct / 100) * CAPITAL;
   
   document.getElementById('totalPct').textContent = totalPct + "%";
   document.getElementById('totalPct').style.color = totalPct !== 100 ? 'var(--danger)' : 'var(--accent)';
   document.getElementById('totalValue').textContent = fmt(totalBaht);
+
+  // คำนวณมูลค่าพอร์ตปัจจุบันตาม % NAV ของกองทุนที่เลือก
+  const codes = Object.keys(portfolio).filter(c => portfolio[c] > 0);
+  let currentVal = 0;
+
+  if (codes.length > 0) {
+    const { data: navs } = await supabase.from('latest_nav').select('*').in('fund_code', codes);
+    const navMap = {};
+    (navs || []).forEach(n => {
+      const c = n.fund_code || n.code;
+      if (c) navMap[c] = n;
+    });
+
+    codes.forEach(code => {
+      const pct = portfolio[code];
+      const bahtCost = (pct / 100) * CAPITAL;
+      const nData = navMap[code] || {};
+      const changePct = Number(nData.change_pct ?? nData.change ?? nData.nav_change ?? 0);
+      currentVal += bahtCost * (1 + changePct / 100);
+    });
+  } else {
+    currentVal = totalBaht;
+  }
+
+  const profitBaht = currentVal - totalBaht;
+  const retPct = totalBaht > 0 ? (profitBaht / totalBaht) * 100 : 0;
+
+  document.getElementById('currentTotalValue').textContent = fmt(currentVal);
+  const retElem = document.getElementById('totalReturn');
+  const sign = profitBaht >= 0 ? "+" : "";
+  retElem.textContent = `${sign}${retPct.toFixed(2)}% (${sign}${fmt(profitBaht)} บาท)`;
+  retElem.style.color = profitBaht >= 0 ? 'var(--accent)' : 'var(--danger)';
 }
 
 document.getElementById('submitBtn').onclick = async () => {
@@ -262,10 +296,14 @@ async function loadLeaderboard(){
   const [{ data: allPlayers }, { data: allHoldings }, { data: navs }] = await Promise.all([
     supabase.from('players').select('line_user_id, nickname'),
     supabase.from('competition_holdings').select('player_line_user_id, fund_code, pct'),
-    supabase.from('latest_nav').select('fund_code, nav'),
+    supabase.from('latest_nav').select('*'),
   ]);
 
-  const navMap = Object.fromEntries((navs||[]).map(n=>[n.fund_code, n.nav]));
+  const navMap = {};
+  (navs || []).forEach(n => {
+    const c = n.fund_code || n.code;
+    if (c) navMap[c] = n;
+  });
 
   const rows = (allPlayers||[]).map(p => {
     const holdings = (allHoldings||[]).filter(h => h.player_line_user_id === p.line_user_id);
@@ -274,8 +312,10 @@ async function loadLeaderboard(){
     let currentVal = 0;
     holdings.forEach(h => {
       const bahtCost = (Number(h.pct) / 100) * CAPITAL;
-      const nav = navMap[h.fund_code];
-      currentVal += nav ? bahtCost : bahtCost;
+      const nData = navMap[h.fund_code] || {};
+      // ดึง % การเปลี่ยนแปลงของ NAV มาคำนวณกำไร/ขาดทุนตามจริง
+      const changePct = Number(nData.change_pct ?? nData.change ?? nData.nav_change ?? 0);
+      currentVal += bahtCost * (1 + changePct / 100);
     });
 
     const retPct = ((currentVal - CAPITAL) / CAPITAL) * 100;
