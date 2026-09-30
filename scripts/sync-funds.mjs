@@ -16,7 +16,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
 });
 
 async function syncAllFunds() {
-  console.log('เริ่มดึงรายชื่อกองทุนทั้งหมดจาก SEC API ด้วย Cursor Pagination...');
+  console.log('🚀 เริ่มดึงรายชื่อกองทุนและ Class ทั้งหมดจาก SEC API...');
 
   const allFundsMap = new Map();
   let nextCursor = '';
@@ -28,7 +28,7 @@ async function syncAllFunds() {
       url += `&next_cursor=${encodeURIComponent(nextCursor)}`;
     }
 
-    console.log(`[รอบที่ ${pageNum}] กำลังดึงข้อมูลกองทุน...`);
+    console.log(`[รอบที่ ${pageNum}] กำลังดึงข้อมูล...`);
 
     const res = await fetch(url, {
       headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
@@ -53,24 +53,33 @@ async function syncAllFunds() {
       const projId = item.proj_id || item.proj_code || item.unique_id;
       if (!projId) return;
 
-      const rawCode = item.proj_abbr_name || item.unique_id || item.proj_id || item.sym_code || `FUND_${pageNum}_${idx}`;
-      const code = String(rawCode).trim();
-      const rawName = item.proj_name_th || item.proj_name_en || item.proj_abbr_name || code;
-      const name = String(rawName).trim();
+      // 🎯 แก้ไขหลัก: เอา fund_class_name ขึ้นก่อน proj_abbr_name 
+      // เพื่อไม่ให้ Class ย่อยโดนยุบรวมกัน
+      const classCode = item.fund_class_name?.trim() || item.proj_abbr_name?.trim() || item.unique_id?.trim() || `FUND_${pageNum}_${idx}`;
+      const projAbbr = item.proj_abbr_name?.trim() || classCode;
 
-      if (!allFundsMap.has(code)) {
-        allFundsMap.set(code, {
-          proj_id: String(projId).trim(),
-          code: code,
-          name: name,
-          fund_class_name: code, // 👈 เพิ่มบรรทัดนี้: บันทึก Class Name ให้ตรงกับ code ของ Class นั้นๆ
+      // ต่อชื่อ Class Detail เพิ่มในชื่อกองทุน (ถ้ามี) เช่น "ชนิดไม่จ่ายเงินปันผล"
+      let fullName = (item.proj_name_th || item.proj_name_en || projAbbr).trim();
+      if (item.fund_class_detail) {
+        fullName += ` (${item.fund_class_detail.trim()})`;
+      }
+
+      if (!allFundsMap.has(classCode)) {
+        allFundsMap.set(classCode, {
+          code: classCode,                          // เช่น SCBNK225, SCBNK225D
+          proj_id: String(projId).trim(),           // เช่น M0429_2556
+          proj_abbr_name: projAbbr,                 // เช่น SCBNKY225
+          name: fullName,                           // ชื่อกองทุน + ชนิดกองทุน
+          fund_class_name: classCode,              // ชื่อ Class สำหรับใช้เทียบ NAV
+          fund_class_detail: item.fund_class_detail || null,
+          fund_class_isin_code: item.fund_class_isin_code || null,
           updated_at: new Date().toISOString()
         });
         newCount++;
       }
     });
 
-    console.log(`- รอบที่ ${pageNum}: ดึงได้ ${items.length} รายการ (สะสมกองทุนใหม่ ${newCount} กองทุน)`);
+    console.log(`- รอบที่ ${pageNum}: อ่านได้ ${items.length} รายการ (เพิ่ม Class ใหม่ ${newCount} รายการ)`);
 
     pageNum++;
 
@@ -81,13 +90,13 @@ async function syncAllFunds() {
   } while (nextCursor);
 
   const uniqueFunds = Array.from(allFundsMap.values());
-  console.log(`\nสรุป: รวบรวมกองทุนและ Class ทั้งหมดได้รวม ${uniqueFunds.length} รายการ`);
+  console.log(`\n📊 สรุป: รวบรวม Class กองทุนทั้งหมดได้ ${uniqueFunds.length} รายการ`);
 
   if (uniqueFunds.length === 0) {
     throw new Error('ไม่พบข้อมูลกองทุนจาก SEC API');
   }
 
-  // บันทึกลง Supabase แบบ Batch Insert / Upsert
+  // บันทึกลง Supabase แบบ Batch Upsert
   const chunkSize = 200;
   let insertedCount = 0;
 
@@ -104,7 +113,7 @@ async function syncAllFunds() {
     }
   }
 
-  console.log(`\nบันทึกรายชื่อกองทุนลง Supabase เรียบร้อยแล้วทั้งหมด ${insertedCount} กองทุน!`);
+  console.log(`\n🎉 บันทึกรายชื่อ Class กองทุนลง Supabase เรียบร้อยแล้วทั้งหมด ${insertedCount} รายการ!`);
 }
 
 syncAllFunds().catch((err) => {
