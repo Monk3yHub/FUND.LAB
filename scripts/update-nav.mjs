@@ -15,7 +15,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   realtime: { transport: ws },
 });
 
-// ฟังก์ชันแปลงและล้างชื่อย่อ (ตัดอักขระพิเศษ และแปลง SCBNKY -> SCBNK)
+// ฟังก์ชันแปลงและล้างชื่อย่อ (ตัดอักขระพิเศษ และแปลง SCBNKY -> SCBNK) — คงไว้ตามเดิม ใช้เป็น fallback เท่านั้น
 function normalizeCode(str) {
   if (!str) return '';
   let cleaned = str.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -27,8 +27,8 @@ function normalizeCode(str) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// ฟังก์ชันดึงข้อมูลพร้อม Retry เมื่อติด Rate Limit (HTTP 429)
-async function fetchSecNavWithRetry(url, retries = 3) {
+// ฟังก์ชันดึงข้อมูลพร้อม Retry เมื่อติด Rate Limit (HTTP 429) — คงไว้ตามเดิม
+async function fetchJsonWithRetry(url, retries = 3) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const res = await fetch(url, {
@@ -56,6 +56,35 @@ async function fetchSecNavWithRetry(url, retries = 3) {
     }
   }
   return null;
+}
+
+// ============================================================
+// ✅ ส่วนที่แก้ใหม่: endpoint จริง + รูปแบบ response จริงของ ก.ล.ต.
+//    (ยืนยันจาก JSON จริงแล้ว — endpoint นี้คืนค่าเป็น { items: [...] } ไม่ใช่ array เปล่าๆ
+//     และมี pagination ผ่าน next_cursor ถ้าข้อมูลเกิน page_size ต่อหน้า)
+// ============================================================
+async function fetchAllNavItemsForProj(projId, startDate, endDate) {
+  const items = [];
+  let cursor = '';
+  do {
+    const url = new URL('https://api.sec.or.th/v2/fund/daily-info/nav');
+    url.searchParams.set('proj_id', projId);
+    url.searchParams.set('start_nav_date', startDate);
+    url.searchParams.set('end_nav_date', endDate);
+    url.searchParams.set('page_size', '100');
+    if (cursor) url.searchParams.set('next_cursor', cursor);
+    // ⚠️ ไม่ส่ง fund_class_name ตรงนี้ เพราะต้องการ NAV ของทุก class ในโครงการนี้มาในคราวเดียว
+    //    แล้วค่อยจับคู่แต่ละ class เองด้านล่าง (ประหยัดจำนวนครั้งที่ยิง API ต่อโครงการ)
+
+    const data = await fetchJsonWithRetry(url.toString());
+    if (!data || !Array.isArray(data.items)) break;
+
+    items.push(...data.items);
+    cursor = data.next_cursor || '';
+    if (cursor) await sleep(30);
+  } while (cursor);
+
+  return items;
 }
 
 async function updateNav() {
@@ -94,15 +123,13 @@ async function updateNav() {
       console.log(`⏳ ประมวลผลสำเร็จแล้ว ${processedCount}/${projMap.size} โครงการ...`);
     }
 
-    const url = `https://api.sec.or.th/FundDailyInfo/${encodeURIComponent(projId)}/NAV/daily/${past30Days}/${today}`;
-
-    // หน่วงเวลาเล็กน้อย 30ms ป้องกันโดนล็อก Rate Limit
+    // หน่วงเวลาเล็กน้อยระหว่างโครงการ ป้องกันโดนล็อก Rate Limit
     await sleep(30);
 
-    const secData = await fetchSecNavWithRetry(url);
-    if (!Array.isArray(secData) || secData.length === 0) continue;
+    const secItems = await fetchAllNavItemsForProj(projId, past30Days, today);
+    if (secItems.length === 0) continue;
 
-    const validSecItems = secData.filter((item) => {
+    const validSecItems = secItems.filter((item) => {
       const rawNav = item.last_val ?? item.nav;
       return rawNav != null && !isNaN(parseFloat(rawNav));
     });
@@ -119,61 +146,43 @@ async function updateNav() {
     }
 
     for (const fund of fundList) {
-      const fundCodeUpper = fund.code ? fund.code.trim().toUpperCase() : '';
       const fundClassUpper = fund.fund_class_name ? fund.fund_class_name.trim().toUpperCase() : '';
-
-      const fundCodeNorm = normalizeCode(fund.code);
       const fundClassNorm = normalizeCode(fund.fund_class_name);
+      const fundCodeNorm = normalizeCode(fund.code);
 
       for (const [navDate, itemsOnDate] of secDataByDate.entries()) {
         let matchedItem = null;
 
-        // ----------------------------------------------------
-        // Step 1: Exact Match (เปรียบเทียบตรงตัว 100%)
-        // ----------------------------------------------------
-        matchedItem = itemsOnDate.find((item) => {
-          const secClass = (item.fund_class || item.class_abbr_name || item.fund_class_name || '').trim().toUpperCase();
-          const secProjAbbr = (item.proj_abbr_name || '').trim().toUpperCase();
-
-          return (
-            (fundCodeUpper && secClass === fundCodeUpper) ||
-            (fundClassUpper && secClass === fundClassUpper) ||
-            (fundCodeUpper && secProjAbbr === fundCodeUpper)
+        // ------------------------------------------------------------
+        // Step 1: จับคู่ด้วย field ที่ยืนยันแล้วว่าถูกต้องจริง — "fund_class_name"
+        //         (ตรงตัว 100% ก่อน — นี่คือทางที่แม่นยำที่สุด ใช้เป็นหลัก)
+        // ------------------------------------------------------------
+        if (fundClassUpper) {
+          matchedItem = itemsOnDate.find(
+            (item) => (item.fund_class_name || '').trim().toUpperCase() === fundClassUpper
           );
-        });
-
-        // ----------------------------------------------------
-        // Step 2: Clean Normalization Match (จับคู่แบบ Strict Equal กัน Class สวมรอย)
-        // ----------------------------------------------------
-        if (!matchedItem) {
-          matchedItem = itemsOnDate.find((item) => {
-            const secClassNorm = normalizeCode(item.fund_class || item.class_abbr_name || item.fund_class_name);
-            const secProjNorm = normalizeCode(item.proj_abbr_name);
-
-            if (!secClassNorm && !secProjNorm) return false;
-
-            return (
-              (fundCodeNorm && secClassNorm === fundCodeNorm) ||
-              (fundClassNorm && secClassNorm === fundClassNorm) ||
-              (fundCodeNorm && secProjNorm === fundCodeNorm)
-            );
-          });
         }
 
-        // ----------------------------------------------------
+        // ------------------------------------------------------------
+        // Step 2: จับคู่แบบ normalize กันกรณีสะกด/เว้นวรรค/ตัวเล็กใหญ่ไม่ตรงเป๊ะ
+        // ------------------------------------------------------------
+        if (!matchedItem && fundClassNorm) {
+          matchedItem = itemsOnDate.find(
+            (item) => normalizeCode(item.fund_class_name) === fundClassNorm
+          );
+        }
+
+        // ------------------------------------------------------------
         // Step 3: Safe Fallback สำหรับกองทุนแบบ Single Class เท่านั้น
-        // ----------------------------------------------------
-        if (!matchedItem && itemsOnDate.length === 1 && fundList.length === 1) {
-          const singleItem = itemsOnDate[0];
-          const secClass = (singleItem.fund_class || singleItem.class_abbr_name || '').trim();
-          if (!secClass) {
-            matchedItem = singleItem;
-          }
+        //         (โครงการนี้มีกองในตาราง funds แค่ 1 แถว และ API คืนมาวันนั้นแค่ 1 รายการ)
+        // ------------------------------------------------------------
+        if (!matchedItem && fundList.length === 1 && itemsOnDate.length === 1) {
+          matchedItem = itemsOnDate[0];
         }
 
-        // ----------------------------------------------------
+        // ------------------------------------------------------------
         // บันทึกเฉพาะรายการที่จับคู่สำเร็จและมีค่า NAV > 0
-        // ----------------------------------------------------
+        // ------------------------------------------------------------
         if (matchedItem) {
           const rawNav = matchedItem.last_val ?? matchedItem.nav;
           const navValue = parseFloat(rawNav);
