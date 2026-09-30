@@ -6,7 +6,7 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY?.trim();
 const SEC_API_KEY = process.env.SEC_API_KEY?.trim();
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !SEC_API_KEY) {
-  console.error('❌ กรุณาตั้งค่า SUPABASE_URL, SUPABASE_SERVICE_KEY และ SEC_API_KEY');
+  console.error('กรุณาตั้งค่า environment variables ให้ครบถ้วน');
   process.exit(1);
 }
 
@@ -16,19 +16,20 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
 });
 
 async function syncAllFunds() {
-  console.log('🚀 เริ่มต้น Sync รายชื่อกองทุนและ Class เข้าตาราง funds...');
+  console.log('เริ่มดึงรายชื่อกองทุนทั้งหมดจาก SEC API ด้วย Cursor Pagination...');
 
   const allFundsMap = new Map();
   let nextCursor = '';
   let pageNum = 1;
 
   do {
+    // กำหนด page_size=100 และพ่วง next_cursor สำหรับดึงหน้าถัดไป
     let url = 'https://api.sec.or.th/v2/fund/general-info/profiles?page_size=100';
     if (nextCursor) {
       url += `&next_cursor=${encodeURIComponent(nextCursor)}`;
     }
 
-    console.log(`[รอบที่ ${pageNum}] กำลังดึงข้อมูลจาก SEC API...`);
+    console.log(`[รอบที่ ${pageNum}] กำลังดึงข้อมูลกองทุน...`);
 
     const res = await fetch(url, {
       headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
@@ -40,8 +41,11 @@ async function syncAllFunds() {
     }
 
     const raw = await res.json();
+    
+    // ดึงอาร์เรย์กองทุนจาก Response
     const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
 
+    // อ่าน next_cursor จาก Response Body หรือ Headers
     const nextCursorFromBody = raw.next_cursor || raw.nextCursor;
     const nextCursorFromHeader = res.headers.get('x-next-cursor') || res.headers.get('next-cursor') || res.headers.get('next_cursor');
     
@@ -53,35 +57,26 @@ async function syncAllFunds() {
       const projId = item.proj_id || item.proj_code || item.unique_id;
       if (!projId) return;
 
-      // 1. ดึงรหัส Class / กองทุน (เอา fund_class_name ขึ้นก่อน)
-      const classCode = (
-        item.fund_class_name || 
-        item.proj_abbr_name || 
-        item.unique_id || 
-        `FUND_${pageNum}_${idx}`
-      ).trim();
+      const rawCode = item.proj_abbr_name || item.unique_id || item.proj_id || item.sym_code || `FUND_${pageNum}_${idx}`;
+      const code = String(rawCode).trim();
+      const rawName = item.proj_name_th || item.proj_name_en || item.proj_abbr_name || code;
+      const name = String(rawName).trim();
 
-      // 2. ชื่อกองทุน (หากมีรายละเอียด Class ให้ต่อท้าย)
-      let rawName = (item.proj_name_th || item.proj_name_en || item.proj_abbr_name || classCode).trim();
-      if (item.fund_class_detail && item.fund_class_detail.trim()) {
-        rawName += ` (${item.fund_class_detail.trim()})`;
-      }
-
-      if (!allFundsMap.has(classCode)) {
-        // 🎯 แมปเฉพาะคอลัมน์ที่มีอยู่จริงในตาราง funds (ตามรูปภาพ)
-        allFundsMap.set(classCode, {
-          code: classCode,
+      if (!allFundsMap.has(code)) {
+        allFundsMap.set(code, {
           proj_id: String(projId).trim(),
-          name: rawName,
-          fund_class_name: classCode // จะไปเติมค่าในคอลัมน์ fund_class_name ที่เคยเป็น NULL
+          code: code,
+          name: name,
         });
         newCount++;
       }
     });
 
-    console.log(`- รอบที่ ${pageNum}: ดึงได้ ${items.length} รายการ (สะสมรายการใหม่ ${newCount} รายการ)`);
+    console.log(`- รอบที่ ${pageNum}: ดึงได้ ${items.length} รายการ (สะสมกองทุนใหม่ ${newCount} กองทุน)`);
+
     pageNum++;
 
+    // หากไม่มีรายการส่งกลับมา หรือค่า Cursor ซ้ำเดิม แสดงว่าดึงครบหมดแล้ว
     if (items.length === 0 || (nextCursor && nextCursor === prevCursor)) {
       break;
     }
@@ -89,13 +84,13 @@ async function syncAllFunds() {
   } while (nextCursor);
 
   const uniqueFunds = Array.from(allFundsMap.values());
-  console.log(`\n📊 สรุป: รวบรวมข้อมูลกองทุน/Class ทั้งหมดได้ ${uniqueFunds.length} รายการ`);
+  console.log(`\nสรุป: รวบรวมกองทุนทั้งหมดทุก บลจ. ได้รวม ${uniqueFunds.length} รายการ`);
 
   if (uniqueFunds.length === 0) {
     throw new Error('ไม่พบข้อมูลกองทุนจาก SEC API');
   }
 
-  // บันทึกลง Supabase
+  // บันทึกลง Supabase แบบ Batch Insert
   const chunkSize = 200;
   let insertedCount = 0;
 
@@ -106,13 +101,13 @@ async function syncAllFunds() {
       .upsert(chunk, { onConflict: 'code' });
 
     if (error) {
-      console.error(`❌ เกิดข้อผิดพลาดในการบันทึกชุดที่ ${i}:`, error.message);
+      console.error(`เกิดข้อผิดพลาดในการบันทึกชุดที่ ${i}:`, error.message);
     } else {
       insertedCount += chunk.length;
     }
   }
 
-  console.log(`\n🎉 บันทึกข้อมูลลงตาราง funds สำเร็จทั้งหมด ${insertedCount} รายการ!`);
+  console.log(`\nบันทึกรายชื่อกองทุนลง Supabase เรียบร้อยแล้วทั้งหมด ${insertedCount} กองทุน!`);
 }
 
 syncAllFunds().catch((err) => {
