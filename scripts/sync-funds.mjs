@@ -23,7 +23,6 @@ async function syncAllFunds() {
   let pageNum = 1;
 
   do {
-    // กำหนด page_size=100 และพ่วง next_cursor สำหรับดึงหน้าถัดไป
     let url = 'https://api.sec.or.th/v2/fund/general-info/profiles?page_size=100';
     if (nextCursor) {
       url += `&next_cursor=${encodeURIComponent(nextCursor)}`;
@@ -41,11 +40,8 @@ async function syncAllFunds() {
     }
 
     const raw = await res.json();
-    
-    // ดึงอาร์เรย์กองทุนจาก Response
     const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
 
-    // อ่าน next_cursor จาก Response Body หรือ Headers
     const nextCursorFromBody = raw.next_cursor || raw.nextCursor;
     const nextCursorFromHeader = res.headers.get('x-next-cursor') || res.headers.get('next-cursor') || res.headers.get('next_cursor');
     
@@ -67,6 +63,8 @@ async function syncAllFunds() {
           proj_id: String(projId).trim(),
           code: code,
           name: name,
+          fund_class_name: code, // 👈 เพิ่มบรรทัดนี้: บันทึก Class Name ให้ตรงกับ code ของ Class นั้นๆ
+          updated_at: new Date().toISOString()
         });
         newCount++;
       }
@@ -76,7 +74,6 @@ async function syncAllFunds() {
 
     pageNum++;
 
-    // หากไม่มีรายการส่งกลับมา หรือค่า Cursor ซ้ำเดิม แสดงว่าดึงครบหมดแล้ว
     if (items.length === 0 || (nextCursor && nextCursor === prevCursor)) {
       break;
     }
@@ -84,13 +81,13 @@ async function syncAllFunds() {
   } while (nextCursor);
 
   const uniqueFunds = Array.from(allFundsMap.values());
-  console.log(`\nสรุป: รวบรวมกองทุนทั้งหมดทุก บลจ. ได้รวม ${uniqueFunds.length} รายการ`);
+  console.log(`\nสรุป: รวบรวมกองทุนและ Class ทั้งหมดได้รวม ${uniqueFunds.length} รายการ`);
 
   if (uniqueFunds.length === 0) {
     throw new Error('ไม่พบข้อมูลกองทุนจาก SEC API');
   }
 
-  // บันทึกลง Supabase แบบ Batch Insert
+  // บันทึกลง Supabase แบบ Batch Insert / Upsert
   const chunkSize = 200;
   let insertedCount = 0;
 
