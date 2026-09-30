@@ -16,7 +16,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
 });
 
 async function updateNav() {
-  console.log('🚀 เริ่มต้นอัปเดตราคา NAV แบบตรวจสอบ Class 100%...');
+  console.log('🚀 เริ่มต้นอัปเดตราคา NAV เข้าตาราง nav_history...');
 
   // 1. ดึงกองทุนทั้งหมดใน Supabase
   const { data: funds, error: fundsErr } = await supabase
@@ -41,7 +41,6 @@ async function updateNav() {
   const past30Days = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
 
   const navHistoryList = [];
-  const latestNavList = [];
 
   // 3. ยิง API SEC แยกตาม proj_id
   for (const [projId, fundList] of projMap.entries()) {
@@ -57,38 +56,35 @@ async function updateNav() {
       if (!Array.isArray(secData) || secData.length === 0) continue;
 
       for (const fund of fundList) {
-        // กำหนด Class Target ที่ต้องจับคู่ให้ตรง
+        // หาก fund_class_name ใน DB เป็น NULL ให้ fallback ไปใช้ code
         const targetClass = (fund.fund_class_name || fund.code).trim().toUpperCase();
 
-        // 🎯 EXACT MATCH: กรองเอาเฉพาะอันที่ proj_abbr_name ตรงกับ Class ของเราเป๊ะๆ เท่านั้น!
+        // 🎯 EXACT MATCH: กรองรายการ NAV ที่ตรงกับ Class ของเรา
         const matchedItems = secData.filter(item => {
-          const secClass = (item.proj_abbr_name || '').trim().toUpperCase();
-          return secClass === targetClass && item.nav != null;
+          const rawNav = item.nav ?? item.last_val;
+          if (rawNav == null || isNaN(parseFloat(rawNav))) return false;
+
+          const secClass = (
+            item.proj_abbr_name || 
+            item.fund_class_name || 
+            item.class_abbr_name || 
+            ''
+          ).trim().toUpperCase();
+
+          return secClass === targetClass;
         });
 
         if (matchedItems.length === 0) continue;
 
-        // เรียงตามวันที่
-        matchedItems.sort((a, b) => new Date(a.nav_date) - new Date(b.nav_date));
-
-        // ใส่ navHistoryList
         for (const item of matchedItems) {
+          const navValue = parseFloat(item.nav ?? item.last_val);
           navHistoryList.push({
             fund_code: fund.code,
             nav_date: item.nav_date,
-            nav: parseFloat(item.nav),
+            nav: navValue,
             updated_at: new Date().toISOString()
           });
         }
-
-        // รายการล่าสุดใส่ latestNavList
-        const latestItem = matchedItems[matchedItems.length - 1];
-        latestNavList.push({
-          fund_code: fund.code,
-          nav_date: latestItem.nav_date,
-          nav: parseFloat(latestItem.nav),
-          updated_at: new Date().toISOString()
-        });
       }
 
     } catch (err) {
@@ -96,27 +92,25 @@ async function updateNav() {
     }
   }
 
-  console.log(`📊 พบรายการ NAV ที่จับคู่ Class ถูกต้องทั้งหมด ${navHistoryList.length} รายการ`);
+  console.log(`📊 พบรายการ NAV ที่จับคู่ตรงตาม Class ทั้งหมด ${navHistoryList.length} รายการ`);
 
   // 4. บันทึกลง nav_history
   if (navHistoryList.length > 0) {
     const chunkSize = 500;
     for (let i = 0; i < navHistoryList.length; i += chunkSize) {
       const chunk = navHistoryList.slice(i, i + chunkSize);
-      await supabase.from('nav_history').upsert(chunk, { onConflict: 'fund_code,nav_date' });
-    }
-  }
+      const { error } = await supabase
+        .from('nav_history')
+        .upsert(chunk, { onConflict: 'fund_code,nav_date' });
 
-  // 5. บันทึกลง latest_nav
-  if (latestNavList.length > 0) {
-    const chunkSize = 500;
-    for (let i = 0; i < latestNavList.length; i += chunkSize) {
-      const chunk = latestNavList.slice(i, i + chunkSize);
-      await supabase.from('latest_nav').upsert(chunk, { onConflict: 'fund_code' });
+      if (error) {
+        console.error(`❌ บันทึก nav_history ไม่สำเร็จ:`, error.message);
+      }
     }
+    console.log('✅ บันทึกข้อมูลลงตาราง nav_history สำเร็จเรียบร้อย!');
+  } else {
+    console.log('⚠️ ไม่พบข้อมูล NAV ใหม่ที่จะบันทึก');
   }
-
-  console.log('🎉 อัปเดตราคา NAV เรียบร้อยแล้ว!');
 }
 
 updateNav().catch(err => {
