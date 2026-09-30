@@ -16,7 +16,7 @@ jobs:
           node-version: '20'
 
       - name: Install Dependencies
-        run: npm install @supabase/supabase-js
+        run: npm install @supabase/supabase-js ws
 
       - name: Run Audit Script
         run: node scripts/audit-funds.mjs
