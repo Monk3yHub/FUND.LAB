@@ -1,0 +1,26 @@
+name: Audit Fund Names with SEC
+
+on:
+  workflow_dispatch: # กดสั่งรันด้วยมือผ่านหน้า GitHub Actions
+
+jobs:
+  audit-funds:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install @supabase/supabase-js
+
+      - name: Run Audit Script
+        run: node scripts/audit-funds.mjs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
