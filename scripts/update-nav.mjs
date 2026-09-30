@@ -6,7 +6,7 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY?.trim();
 const SEC_API_KEY = process.env.SEC_API_KEY?.trim();
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !SEC_API_KEY) {
-  console.error('กรุณาตั้งค่า environment variables ให้ครบถ้วน');
+  console.error('❌ กรุณาตั้งค่า SUPABASE_URL, SUPABASE_SERVICE_KEY และ SEC_API_KEY');
   process.exit(1);
 }
 
@@ -15,154 +15,111 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   realtime: { transport: ws },
 });
 
-// 1. ดึง mapping proj_id -> code ทั้งหมดจาก Supabase
-async function getAllFundsMapping() {
-  const projIdToCodeMap = new Map();
-  let page = 0;
-  const pageSize = 1000;
-  let hasMore = true;
+async function updateNav() {
+  console.log('🚀 เริ่มต้นอัปเดตราคา NAV แบบตรวจสอบ Class 100%...');
 
-  while (hasMore) {
-    const { data, error } = await supabase
-      .from('funds')
-      .select('code, proj_id')
-      .not('proj_id', 'is', null)
-      .range(page * pageSize, (page + 1) * pageSize - 1);
+  // 1. ดึงกองทุนทั้งหมดใน Supabase
+  const { data: funds, error: fundsErr } = await supabase
+    .from('funds')
+    .select('code, proj_id, fund_class_name');
 
-    if (error) {
-      console.error('เกิดข้อผิดพลาดในการดึงข้อมูลตาราง funds:', error.message);
-      break;
+  if (fundsErr || !funds) {
+    throw new Error(`ไม่สามารถอ่านตาราง funds ได้: ${fundsErr?.message}`);
+  }
+
+  // 2. จัดกลุ่มตาม proj_id เพื่อลดจำนวนการยิง API
+  const projMap = new Map();
+  for (const fund of funds) {
+    if (!fund.proj_id) continue;
+    if (!projMap.has(fund.proj_id)) {
+      projMap.set(fund.proj_id, []);
     }
+    projMap.get(fund.proj_id).push(fund);
+  }
 
-    if (!data || data.length === 0) {
-      hasMore = false;
-    } else {
-      data.forEach((f) => {
-        if (f.proj_id && f.code) {
-          projIdToCodeMap.set(f.proj_id.trim(), f.code.trim());
-        }
+  const today = new Date().toISOString().split('T')[0];
+  const past30Days = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+
+  const navHistoryList = [];
+  const latestNavList = [];
+
+  // 3. ยิง API SEC แยกตาม proj_id
+  for (const [projId, fundList] of projMap.entries()) {
+    const url = `https://api.sec.or.th/FundDailyInfo/${encodeURIComponent(projId)}/NAV/daily/${past30Days}/${today}`;
+
+    try {
+      const res = await fetch(url, {
+        headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY }
       });
-      if (data.length < pageSize) {
-        hasMore = false;
-      } else {
-        page++;
-      }
-    }
-  }
 
-  return projIdToCodeMap;
-}
+      if (!res.ok) continue;
+      const secData = await res.json();
+      if (!Array.isArray(secData) || secData.length === 0) continue;
 
-async function updateAllNAV() {
-  console.log('1. ดึงรายชื่อกองทุนทั้งหมดจาก Supabase...');
-  const projIdToCodeMap = await getAllFundsMapping();
-  console.log(`โหลดข้อมูลจับคู่สำเร็จทั้งหมด ${projIdToCodeMap.size} กองทุน`);
+      for (const fund of fundList) {
+        // กำหนด Class Target ที่ต้องจับคู่ให้ตรง
+        const targetClass = (fund.fund_class_name || fund.code).trim().toUpperCase();
 
-  if (projIdToCodeMap.size === 0) {
-    throw new Error('ไม่พบข้อมูลกองทุนในตาราง funds');
-  }
+        // 🎯 EXACT MATCH: กรองเอาเฉพาะอันที่ proj_abbr_name ตรงกับ Class ของเราเป๊ะๆ เท่านั้น!
+        const matchedItems = secData.filter(item => {
+          const secClass = (item.proj_abbr_name || '').trim().toUpperCase();
+          return secClass === targetClass && item.nav != null;
+        });
 
-  // คำนวณวันที่ย้อนหลัง 7 วันจากปัจจุบัน (ป้องกันติดวันหยุดเสาร์-อาทิตย์)
-  const today = new Date();
-  const pastSevenDays = new Date(today);
-  pastSevenDays.setDate(today.getDate() - 7);
-  const startNavDate = pastSevenDays.toISOString().split('T')[0];
+        if (matchedItems.length === 0) continue;
 
-  console.log(`\n2. ดึงข้อมูล NAV ล่าสุด (ย้อนหลังไม่เกิน 7 วัน ตั้งแต่วันที่ ${startNavDate}) จาก SEC API...`);
+        // เรียงตามวันที่
+        matchedItems.sort((a, b) => new Date(a.nav_date) - new Date(b.nav_date));
 
-  const navRecordsMap = new Map();
-  let nextCursor = '';
-  let pageNum = 1;
-
-  do {
-    // ดึงเฉพาะ 7 วันล่าสุด
-    let url = `https://api.sec.or.th/v2/fund/daily-info/nav?page_size=100&start_nav_date=${startNavDate}`;
-    if (nextCursor) {
-      url += `&next_cursor=${encodeURIComponent(nextCursor)}`;
-    }
-
-    const res = await fetch(url, {
-      headers: { 'Ocp-Apim-Subscription-Key': SEC_API_KEY },
-    });
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      console.warn(`รอบที่ ${pageNum} ตอบกลับสถานะ ${res.status}: ${errText.slice(0, 100)}`);
-      break;
-    }
-
-    const raw = await res.json();
-    const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
-
-    const nextCursorFromBody = raw.next_cursor || raw.nextCursor;
-    const nextCursorFromHeader = res.headers.get('x-next-cursor') || res.headers.get('next-cursor') || res.headers.get('next_cursor');
-    const prevCursor = nextCursor;
-    nextCursor = nextCursorFromBody || nextCursorFromHeader || '';
-
-    let matchedInThisPage = 0;
-
-    items.forEach((item) => {
-      const projId = (item.proj_id || item.proj_code || item.unique_id || '').trim();
-      if (!projId) return;
-
-      const code = projIdToCodeMap.get(projId);
-      if (!code) return;
-
-      const navDate = item.nav_date || item.as_of_date || item.date;
-      const navVal = parseFloat(item.last_val ?? item.net_asset_value ?? item.nav);
-
-      if (navDate && navDate >= startNavDate && !isNaN(navVal)) {
-        const key = `${code}_${navDate}`;
-        if (!navRecordsMap.has(key)) {
-          navRecordsMap.set(key, {
-            fund_code: code,
-            nav_date: navDate,
-            nav: navVal,
+        // ใส่ navHistoryList
+        for (const item of matchedItems) {
+          navHistoryList.push({
+            fund_code: fund.code,
+            nav_date: item.nav_date,
+            nav: parseFloat(item.nav),
+            updated_at: new Date().toISOString()
           });
-          matchedInThisPage++;
         }
+
+        // รายการล่าสุดใส่ latestNavList
+        const latestItem = matchedItems[matchedItems.length - 1];
+        latestNavList.push({
+          fund_code: fund.code,
+          nav_date: latestItem.nav_date,
+          nav: parseFloat(latestItem.nav),
+          updated_at: new Date().toISOString()
+        });
       }
-    });
 
-    console.log(`- รอบที่ ${pageNum}: รับข้อมูลมา ${items.length} รายการ (บันทึก NAV สำเร็จ ${matchedInThisPage} รายการ)`);
-    pageNum++;
-
-    if (items.length === 0 || (nextCursor && nextCursor === prevCursor)) {
-      break;
-    }
-
-  } while (nextCursor);
-
-  const navRecords = Array.from(navRecordsMap.values());
-  console.log(`\nสรุป: รวบรวมข้อมูล NAV ล่าสุดได้รวม ${navRecords.length} รายการ`);
-
-  if (navRecords.length === 0) {
-    console.log('ไม่พบข้อมูล NAV ล่าสุดที่ต้องบันทึก');
-    return;
-  }
-
-  // 3. บันทึกลง Supabase
-  console.log('\n3. บันทึกข้อมูลลงตาราง nav_history ใน Supabase...');
-  const chunkSize = 500;
-  let insertedCount = 0;
-
-  for (let i = 0; i < navRecords.length; i += chunkSize) {
-    const chunk = navRecords.slice(i, i + chunkSize);
-    const { error } = await supabase
-      .from('nav_history')
-      .upsert(chunk, { onConflict: 'fund_code,nav_date' });
-
-    if (error) {
-      console.error(`เกิดข้อผิดพลาดในการบันทึกชุดที่ ${i}:`, error.message);
-    } else {
-      insertedCount += chunk.length;
+    } catch (err) {
+      console.error(`⚠️ Error fetching NAV for proj_id ${projId}:`, err.message);
     }
   }
 
-  console.log(`\nบันทึกข้อมูล NAV ลง nav_history สำเร็จทั้งหมด ${insertedCount} รายการ!`);
+  console.log(`📊 พบรายการ NAV ที่จับคู่ Class ถูกต้องทั้งหมด ${navHistoryList.length} รายการ`);
+
+  // 4. บันทึกลง nav_history
+  if (navHistoryList.length > 0) {
+    const chunkSize = 500;
+    for (let i = 0; i < navHistoryList.length; i += chunkSize) {
+      const chunk = navHistoryList.slice(i, i + chunkSize);
+      await supabase.from('nav_history').upsert(chunk, { onConflict: 'fund_code,nav_date' });
+    }
+  }
+
+  // 5. บันทึกลง latest_nav
+  if (latestNavList.length > 0) {
+    const chunkSize = 500;
+    for (let i = 0; i < latestNavList.length; i += chunkSize) {
+      const chunk = latestNavList.slice(i, i + chunkSize);
+      await supabase.from('latest_nav').upsert(chunk, { onConflict: 'fund_code' });
+    }
+  }
+
+  console.log('🎉 อัปเดตราคา NAV เรียบร้อยแล้ว!');
 }
 
-updateAllNAV().catch((err) => {
-  console.error('Update NAV Failed:', err?.message ?? err);
+updateNav().catch(err => {
+  console.error('Update NAV failed:', err);
   process.exit(1);
 });
