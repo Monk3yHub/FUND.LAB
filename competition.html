@@ -122,8 +122,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const CAPITAL = 1000000; 
 
-// 🎯 วันหมดเขตแก้ไขพอร์ต (ศุกร์ที่ 25 ก.ย. 2026 เวลา 23:59:59 น.)
+// 🎯 กำหนดวันหมดเขต และวันเริ่มตั้งต้นการแข่งขันสำหรับดึง NAV
 const DEADLINE = new Date("2026-09-25T23:59:59+07:00");
+const START_DATE = "2026-09-25";
 
 let lineUserId = null, nickname = "";
 let portfolio = {}; // fund_code -> pct
@@ -263,12 +264,18 @@ async function updateSummary(){
 
   if (codes.length > 0) {
     chartSection.style.display = 'block';
-    const { data: navs } = await supabase.from('latest_nav').select('*').in('fund_code', codes);
+    
+    // ดึงทั้ง NAV ล่าสุด และ NAV วันเริ่มแข่ง (25/9/2026)
+    const [{ data: navs }, { data: startNavs }] = await Promise.all([
+      supabase.from('latest_nav').select('*').in('fund_code', codes),
+      supabase.from('nav_history').select('fund_code, nav').eq('nav_date', START_DATE).in('fund_code', codes)
+    ]);
+
     const navMap = {};
-    (navs || []).forEach(n => {
-      const c = n.fund_code || n.code;
-      if (c) navMap[c] = n;
-    });
+    (navs || []).forEach(n => { navMap[n.fund_code || n.code] = Number(n.nav); });
+
+    const startNavMap = {};
+    (startNavs || []).forEach(n => { startNavMap[n.fund_code] = Number(n.nav); });
 
     const labels = [];
     const chartData = [];
@@ -277,9 +284,16 @@ async function updateSummary(){
     codes.forEach(code => {
       const pct = portfolio[code];
       const bahtCost = (pct / 100) * CAPITAL;
-      const nData = navMap[code] || {};
-      const changePct = Number(nData.change_pct ?? nData.change ?? nData.nav_change ?? 0);
-      const fundCurrentVal = bahtCost * (1 + changePct / 100);
+      const currentNav = navMap[code];
+      const startNav = startNavMap[code];
+
+      let fundCurrentVal = bahtCost;
+      let changePct = 0;
+
+      if (currentNav && startNav && startNav > 0) {
+        fundCurrentVal = bahtCost * (currentNav / startNav);
+        changePct = ((currentNav - startNav) / startNav) * 100;
+      }
       
       currentVal += fundCurrentVal;
       labels.push(code);
@@ -372,16 +386,23 @@ async function loadLeaderboard(){
   const box = document.getElementById('leaderboard');
   box.innerHTML = '<div class="loading">กำลังคำนวณและดึงอันดับ...</div>';
 
-  const [{ data: allPlayers }, { data: allHoldings }, { data: navs }] = await Promise.all([
+  // ดึงข้อมูลพร้อมกัน 4 ตาราง (ดึง NAV วันเริ่มแข่ง 25/9/2026 ด้วย)
+  const [{ data: allPlayers }, { data: allHoldings }, { data: navs }, { data: startNavs }] = await Promise.all([
     supabase.from('players').select('line_user_id, nickname'),
     supabase.from('competition_holdings').select('player_line_user_id, fund_code, pct'),
     supabase.from('latest_nav').select('*'),
+    supabase.from('nav_history').select('fund_code, nav').eq('nav_date', START_DATE)
   ]);
 
   const navMap = {};
   (navs || []).forEach(n => {
     const c = n.fund_code || n.code;
-    if (c) navMap[c] = n;
+    if (c) navMap[c] = Number(n.nav);
+  });
+
+  const startNavMap = {};
+  (startNavs || []).forEach(n => {
+    if (n.fund_code) startNavMap[n.fund_code] = Number(n.nav);
   });
 
   const rows = (allPlayers||[]).map(p => {
@@ -391,9 +412,15 @@ async function loadLeaderboard(){
     let currentVal = 0;
     holdings.forEach(h => {
       const bahtCost = (Number(h.pct) / 100) * CAPITAL;
-      const nData = navMap[h.fund_code] || {};
-      const changePct = Number(nData.change_pct ?? nData.change ?? nData.nav_change ?? 0);
-      currentVal += bahtCost * (1 + changePct / 100);
+      const currentNav = navMap[h.fund_code];
+      const startNav = startNavMap[h.fund_code];
+
+      // คำนวณตามอัตราส่วน NAV วันล่าสุด / NAV วันเริ่มแข่ง
+      if (currentNav && startNav && startNav > 0) {
+        currentVal += bahtCost * (currentNav / startNav);
+      } else {
+        currentVal += bahtCost;
+      }
     });
 
     const retPct = ((currentVal - CAPITAL) / CAPITAL) * 100;
