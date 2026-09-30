@@ -1,15 +1,19 @@
+import ws from 'ws';
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const SEC_API_KEY = process.env.SEC_API_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL?.trim();
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY?.trim();
+const SEC_API_KEY = process.env.SEC_API_KEY?.trim();
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-  console.error('❌ Missing SUPABASE_URL or SUPABASE_SERVICE_KEY');
+  console.error('❌ กรุณาตั้งค่า SUPABASE_URL และ SUPABASE_SERVICE_KEY');
   process.exit(1);
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+  auth: { persistSession: false },
+  realtime: { transport: ws },
+});
 
 async function auditAllFunds() {
   console.log('🔍 กำลังเริ่มตรวจสอบกองทุนทั้งหมดในระบบเทียบกับ SEC...\n');
@@ -35,13 +39,13 @@ async function auditAllFunds() {
       });
 
       if (!res.ok) {
-        console.log(`⚠️️ [ERROR API] กองทุน ${fundCode} (proj_id: ${projId}) ยิง SEC ไม่ผ่าน`);
+        console.log(`⚠️ [ERROR API] กองทุน ${fundCode} (proj_id: ${projId}) ยิง SEC ไม่ผ่าน`);
         continue;
       }
 
       const secData = await res.json();
       if (!Array.isArray(secData) || secData.length === 0) {
-        console.log(`⚠️️ [NO DATA] กองทุน ${fundCode} ไม่มีข้อมูลใน SEC`);
+        console.log(`⚠️ [NO DATA] กองทุน ${fundCode} ไม่มีข้อมูลใน SEC`);
         continue;
       }
 
