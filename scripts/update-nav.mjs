@@ -88,7 +88,7 @@ async function fetchAllNavItemsForProj(projId, startDate, endDate) {
 }
 
 async function updateNav() {
-  console.log('🚀 เริ่มต้นอัปเดตราคา NAV ครอบคลุมทุก Class...');
+  console.log('🚀 เริ่มต้นอัปเดตราคา NAV ครอบคลุมทุก Class... (ย้อนหลัง 7 วัน)');
 
   const { data: funds, error: fundsErr } = await supabase
     .from('funds')
@@ -111,8 +111,9 @@ async function updateNav() {
 
   console.log(`🔍 จัดกลุ่มได้ ${projMap.size} โครงการ (proj_id)`);
 
+  // 🔧 เปลี่ยนจากย้อนหลัง 30 วัน → 7 วัน ตามที่ขอ
   const today = new Date().toISOString().split('T')[0];
-  const past30Days = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+  const past7Days = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
 
   const navHistoryList = [];
   let processedCount = 0;
@@ -126,7 +127,7 @@ async function updateNav() {
     // หน่วงเวลาเล็กน้อยระหว่างโครงการ ป้องกันโดนล็อก Rate Limit
     await sleep(30);
 
-    const secItems = await fetchAllNavItemsForProj(projId, past30Days, today);
+    const secItems = await fetchAllNavItemsForProj(projId, past7Days, today);
     if (secItems.length === 0) continue;
 
     const validSecItems = secItems.filter((item) => {
