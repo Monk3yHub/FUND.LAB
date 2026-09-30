@@ -1,51 +1,156 @@
-name: Update Daily NAV
+import { createClient } from '@supabase/supabase-js';
 
-on:
-  schedule:
-    - cron: '0 11 * * 1-5'
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: 'เลือกโหมดการดึงข้อมูล'
-        required: true
-        default: 'daily'
-        type: choice
-        options:
-          - daily
-          - ytd
+// 1. ตรวจสอบการเชื่อมต่อ Environment Variables
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const SEC_API_KEY = process.env.SEC_API_KEY;
 
-jobs:
-  update-nav:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+  console.error('❌ Missing Supabase credentials in environment variables.');
+  process.exit(1);
+}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-      - name: Install Dependencies
-        run: npm install ws @supabase/supabase-js
+// เช็ค Flag --ytd จากคำสั่ง CLI (เช่น node scripts/update-nav.mjs --ytd)
+const isYtdMode = process.argv.includes('--ytd');
 
-      - name: Sync Funds List from SEC
-        run: node scripts/sync-funds.mjs
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
+console.log(`🚀 Starting NAV Sync Script [Mode: ${isYtdMode ? 'YTD (Year-To-Date)' : 'Daily'}]`);
 
-      - name: Run Update NAV Script
-        run: |
-          if [ "${{ inputs.mode }}" = "ytd" ]; then
-            echo "🚀 สั่งรันโหมด YTD: ดึงข้อมูลย้อนหลังตั้งแต่ต้นปี..."
-            node scripts/update-nav.mjs --ytd
-          else
-            echo "📅 สั่งรันโหมด Daily: ดึงข้อมูลอัปเดตประจำวัน..."
-            node scripts/update-nav.mjs
-          fi
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          SEC_API_KEY: ${{ secrets.SEC_API_KEY }}
+// คำนวณช่วงวันที่ตามโหมด
+function getDateRange() {
+  const today = new Date();
+  const endDate = today.toISOString().split('T')[0];
+
+  let startDate;
+  if (isYtdMode) {
+    // โหมด YTD: เริ่มวันที่ 1 มกราคม ของปีปัจจุบัน
+    startDate = `${today.getFullYear()}-01-01`;
+  } else {
+    // โหมด Daily: ดึงย้อนหลัง 7 วัน (เพื่อเก็บตกวันเสาร์-อาทิตย์ และวันหยุดนักขัตฤกษ์)
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    startDate = d.toISOString().split('T')[0];
+  }
+
+  return { startDate, endDate };
+}
+
+// ฟังก์ชันดึงข้อมูลจาก SEC API
+async function fetchSecNavData(fundCode, startDate, endDate) {
+  // SEC Daily NAV Endpoint
+  const url = `https://api.sec.or.th/FundDailyInfo/${fundCode}/NAV/daily/${startDate}/${endDate}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Ocp-Apim-Subscription-Key': SEC_API_KEY || '',
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      if (response.status === 444 || response.status === 404) {
+        return []; // ไม่พบข้อมูลจาก SEC
+      }
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    console.error(`  ⚠️ API Error for ${fundCode}:`, err.message);
+    return [];
+  }
+}
+
+async function main() {
+  // 2. ดึงรายการกองทุนทั้งหมดที่เรามีในตาราง funds
+  const { data: funds, error: fundErr } = await supabase
+    .from('funds')
+    .select('code');
+
+  if (fundErr || !funds) {
+    console.error('❌ Failed to fetch funds from database:', fundErr?.message);
+    process.exit(1);
+  }
+
+  const { startDate, endDate } = getDateRange();
+  console.log(`📅 Date Range: ${startDate} to ${endDate}`);
+  console.log(`📦 Total funds to process: ${funds.length}`);
+
+  let totalUpdatedRecords = 0;
+
+  for (const fund of funds) {
+    const fundCode = fund.code;
+    console.log(`\n🔍 Syncing NAV for: ${fundCode}`);
+
+    const secNavList = await fetchSecNavData(fundCode, startDate, endDate);
+
+    if (secNavList.length === 0) {
+      console.warn(`  ⚠️ No data returned from SEC for: ${fundCode}`);
+      continue;
+    }
+
+    // 3. กรองเฉพาะรายการที่ชื่อ Class ตรงเป๊ะ 100% (Strict Exact Match)
+    // ป้องกันการดึงข้อมูลสลับกับ Class P, SSF, RMF หรือ Class อื่นๆ
+    const validNavRecords = [];
+
+    for (const item of secNavList) {
+      const secClassCode = item.proj_abbr_name ? item.proj_abbr_name.trim().toUpperCase() : '';
+      const targetCode = fundCode.trim().toUpperCase();
+
+      // บังคับ Exact Match เท่านั้น (ไม่ใช้ .includes หรือ LIKE)
+      if (secClassCode === targetCode && item.nav != null) {
+        validNavRecords.push({
+          fund_code: fundCode,
+          nav_date: item.nav_date,
+          nav: parseFloat(item.nav),
+          updated_at: new Date().toISOString()
+        });
+      }
+    }
+
+    if (validNavRecords.length === 0) {
+      console.warn(`  ⚠️ SEC returned data, but NO EXACT CLASS MATCH for '${fundCode}'. Skipped to prevent data corruption.`);
+      continue;
+    }
+
+    // 4. บันทึกลงตาราง nav_history (Upsert เขียนทับหากมี nav_date เดิมอยู่แล้ว)
+    const { error: historyErr } = await supabase
+      .from('nav_history')
+      .upsert(validNavRecords, { onConflict: 'fund_code,nav_date' });
+
+    if (historyErr) {
+      console.error(`  ❌ Error updating 'nav_history' for ${fundCode}:`, historyErr.message);
+    } else {
+      console.log(`  ✅ Saved ${validNavRecords.length} records to nav_history.`);
+      totalUpdatedRecords += validNavRecords.length;
+    }
+
+    // 5. อัปเดตราคา NAV ล่าสุดลงตาราง funds (หรือ latest_nav)
+    const latestRecord = validNavRecords.sort((a, b) => new Date(b.nav_date) - new Date(a.nav_date))[0];
+
+    if (latestRecord) {
+      const { error: fundUpdateErr } = await supabase
+        .from('funds')
+        .update({
+          last_nav: latestRecord.nav,
+          last_nav_date: latestRecord.nav_date,
+          updated_at: new Date().toISOString()
+        })
+        .eq('code', fundCode);
+
+      if (fundUpdateErr) {
+        console.error(`  ❌ Error updating latest NAV for ${fundCode}:`, fundUpdateErr.message);
+      } else {
+        console.log(`  📌 Updated Latest NAV (${latestRecord.nav_date}): ${latestRecord.nav}`);
+      }
+    }
+  }
+
+  console.log(`\n🎉 Sync Completed! Total NAV records written: ${totalUpdatedRecords}`);
+}
+
+main();
