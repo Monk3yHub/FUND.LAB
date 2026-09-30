@@ -103,7 +103,7 @@ async function updateNav() {
     if (!Array.isArray(secData) || secData.length === 0) continue;
 
     const validSecItems = secData.filter((item) => {
-      const rawNav = item.nav ?? item.last_val;
+      const rawNav = item.last_val ?? item.nav;
       return rawNav != null && !isNaN(parseFloat(rawNav));
     });
 
@@ -119,44 +119,73 @@ async function updateNav() {
     }
 
     for (const fund of fundList) {
+      const fundCodeUpper = fund.code ? fund.code.trim().toUpperCase() : '';
+      const fundClassUpper = fund.fund_class_name ? fund.fund_class_name.trim().toUpperCase() : '';
+
       const fundCodeNorm = normalizeCode(fund.code);
       const fundClassNorm = normalizeCode(fund.fund_class_name);
 
       for (const [navDate, itemsOnDate] of secDataByDate.entries()) {
         let matchedItem = null;
 
-        // 1. Match ตรงตัว
+        // ----------------------------------------------------
+        // Step 1: Exact Match (เปรียบเทียบตรงตัว 100%)
+        // ----------------------------------------------------
         matchedItem = itemsOnDate.find((item) => {
-          const secClass = (item.fund_class_name || item.class_abbr_name || item.proj_abbr_name || '').trim().toUpperCase();
-          return secClass === fund.code.trim().toUpperCase() ||
-                 (fund.fund_class_name && secClass === fund.fund_class_name.trim().toUpperCase());
+          const secClass = (item.fund_class || item.class_abbr_name || item.fund_class_name || '').trim().toUpperCase();
+          const secProjAbbr = (item.proj_abbr_name || '').trim().toUpperCase();
+
+          return (
+            (fundCodeUpper && secClass === fundCodeUpper) ||
+            (fundClassUpper && secClass === fundClassUpper) ||
+            (fundCodeUpper && secProjAbbr === fundCodeUpper)
+          );
         });
 
-        // 2. Normalize Match (จัดการชื่อย่อ SCBNKY -> SCBNK)
+        // ----------------------------------------------------
+        // Step 2: Clean Normalization Match (จับคู่แบบ Strict Equal กัน Class สวมรอย)
+        // ----------------------------------------------------
         if (!matchedItem) {
           matchedItem = itemsOnDate.find((item) => {
-            const secClassNorm = normalizeCode(item.fund_class_name || item.class_abbr_name || item.proj_abbr_name);
-            if (!secClassNorm) return false;
-            return secClassNorm === fundCodeNorm ||
-                   (fundClassNorm && secClassNorm === fundClassNorm) ||
-                   secClassNorm.includes(fundCodeNorm) ||
-                   fundCodeNorm.includes(secClassNorm);
+            const secClassNorm = normalizeCode(item.fund_class || item.class_abbr_name || item.fund_class_name);
+            const secProjNorm = normalizeCode(item.proj_abbr_name);
+
+            if (!secClassNorm && !secProjNorm) return false;
+
+            return (
+              (fundCodeNorm && secClassNorm === fundCodeNorm) ||
+              (fundClassNorm && secClassNorm === fundClassNorm) ||
+              (fundCodeNorm && secProjNorm === fundCodeNorm)
+            );
           });
         }
 
-        // 3. Fallback หาก SEC ส่งราคามาในระดับโครงการ
-        if (!matchedItem && itemsOnDate.length > 0) {
-          matchedItem = itemsOnDate[0];
+        // ----------------------------------------------------
+        // Step 3: Safe Fallback สำหรับกองทุนแบบ Single Class เท่านั้น
+        // ----------------------------------------------------
+        if (!matchedItem && itemsOnDate.length === 1 && fundList.length === 1) {
+          const singleItem = itemsOnDate[0];
+          const secClass = (singleItem.fund_class || singleItem.class_abbr_name || '').trim();
+          if (!secClass) {
+            matchedItem = singleItem;
+          }
         }
 
+        // ----------------------------------------------------
+        // บันทึกเฉพาะรายการที่จับคู่สำเร็จและมีค่า NAV > 0
+        // ----------------------------------------------------
         if (matchedItem) {
-          const navValue = parseFloat(matchedItem.nav ?? matchedItem.last_val);
-          navHistoryList.push({
-            fund_code: fund.code,
-            nav_date: navDate,
-            nav: navValue,
-            updated_at: new Date().toISOString(),
-          });
+          const rawNav = matchedItem.last_val ?? matchedItem.nav;
+          const navValue = parseFloat(rawNav);
+
+          if (!isNaN(navValue) && navValue > 0) {
+            navHistoryList.push({
+              fund_code: fund.code,
+              nav_date: navDate,
+              nav: navValue,
+              updated_at: new Date().toISOString(),
+            });
+          }
         }
       }
     }
