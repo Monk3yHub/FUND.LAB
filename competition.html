@@ -265,21 +265,27 @@ async function updateSummary(){
   if (codes.length > 0) {
     chartSection.style.display = 'block';
     
-    // ดึงทั้ง NAV ล่าสุด และ NAV วันเริ่มแข่ง (25/9/2026) โดยรองรับ Timestamp Range
+    // ดึงทั้ง NAV ล่าสุด และ NAV วันเริ่มแข่ง (25/9/2026)
     const [{ data: navs }, { data: startNavs }] = await Promise.all([
       supabase.from('latest_nav').select('*').in('fund_code', codes),
       supabase.from('nav_history')
         .select('*')
-        .gte('nav_date', `${START_DATE}T00:00:00`)
+        .gte('nav_date', START_DATE)
         .lte('nav_date', `${START_DATE}T23:59:59`)
         .in('fund_code', codes)
     ]);
 
     const navMap = {};
-    (navs || []).forEach(n => { navMap[n.fund_code || n.code] = Number(n.nav); });
+    (navs || []).forEach(n => { 
+      const c = n.fund_code || n.code;
+      if (c && n.nav != null) navMap[c] = Number(n.nav);
+    });
 
     const startNavMap = {};
-    (startNavs || []).forEach(n => { startNavMap[n.fund_code || n.code] = Number(n.nav); });
+    (startNavs || []).forEach(n => { 
+      const c = n.fund_code || n.code;
+      if (c && n.nav != null) startNavMap[c] = Number(n.nav);
+    });
 
     const labels = [];
     const chartData = [];
@@ -295,8 +301,12 @@ async function updateSummary(){
       let changePct = 0;
 
       if (currentNav && startNav && startNav > 0) {
-        fundCurrentVal = bahtCost * (currentNav / startNav);
-        changePct = ((currentNav - startNav) / startNav) * 100;
+        const ratio = currentNav / startNav;
+        // Safety Guard: กองทุนรวมปกติจะไม่ผันผวนเกิน ±30% ใน 3-5 วัน หากเกินแสดงว่าข้อมูล DB ผิดพลาด
+        if (ratio >= 0.7 && ratio <= 1.3) {
+          fundCurrentVal = bahtCost * ratio;
+          changePct = ((currentNav - startNav) / startNav) * 100;
+        }
       }
       
       currentVal += fundCurrentVal;
@@ -391,7 +401,7 @@ async function loadLeaderboard(){
   box.innerHTML = '<div class="loading">กำลังคำนวณและดึงอันดับ...</div>';
 
   try {
-    // 1. ดึงรายชื่อผู้เล่น และ กองทุนที่มีการถือครองทั้งหมดในระบบ
+    // 1. ดึงผู้เล่น และ กองทุนทั้งหมดที่ผู้เล่นเลือกแข่ง
     const [{ data: allPlayers }, { data: allHoldings }] = await Promise.all([
       supabase.from('players').select('line_user_id, nickname'),
       supabase.from('competition_holdings').select('player_line_user_id, fund_code, pct')
@@ -402,31 +412,36 @@ async function loadLeaderboard(){
       return;
     }
 
-    // รวบรวมรหัสกองทุนที่มีคนเลือกแข่งจริงทั้งหมด (ป้องกันการติดขีดจำกัด 1,000 แถว)
+    // รวมรหัสกองทุนที่มีคนเลือกแข่งจริงทั้งหมด
     const uniqueCodes = [...new Set(allHoldings.map(h => h.fund_code).filter(Boolean))];
 
-    // 2. ดึง NAV ล่าสุด และ NAV วันเริ่มแข่ง (25/9/2026) เฉพาะกองทุนที่มีคนเลือกแข่งจริง
+    if (uniqueCodes.length === 0) {
+      box.innerHTML = '<div class="loading">ยังไม่มีผู้เล่นส่งพอร์ตแข่งขัน</div>';
+      return;
+    }
+
+    // 2. ดึง NAV ล่าสุด และ NAV วันเริ่มแข่ง (25/9/2026) เฉพาะกองทุนที่มีคนเลือกจริง
     const [{ data: navs }, { data: startNavs }] = await Promise.all([
       supabase.from('latest_nav').select('*').in('fund_code', uniqueCodes),
       supabase.from('nav_history')
         .select('*')
-        .gte('nav_date', `${START_DATE}T00:00:00`)
+        .gte('nav_date', START_DATE)
         .lte('nav_date', `${START_DATE}T23:59:59`)
         .in('fund_code', uniqueCodes)
     ]);
 
-    // สร้าง Map NAV ล่าสุด (รองรับทั้ง fund_code และ code)
+    // สร้าง Map NAV ล่าสุด (รองรับฟิลด์ fund_code และ code)
     const navMap = {};
     (navs || []).forEach(n => {
       const c = n.fund_code || n.code;
-      if (c) navMap[c] = Number(n.nav);
+      if (c && n.nav != null) navMap[c] = Number(n.nav);
     });
 
-    // สร้าง Map NAV วันเริ่มแข่ง (รองรับทั้ง fund_code และ code)
+    // สร้าง Map NAV วันเริ่มแข่ง (รองรับฟิลด์ fund_code และ code)
     const startNavMap = {};
     (startNavs || []).forEach(n => {
       const c = n.fund_code || n.code;
-      if (c) startNavMap[c] = Number(n.nav);
+      if (c && n.nav != null) startNavMap[c] = Number(n.nav);
     });
 
     // 3. คำนวณผลตอบแทนของผู้เล่นแต่ละคน
@@ -441,7 +456,13 @@ async function loadLeaderboard(){
         const startNav = startNavMap[h.fund_code];
 
         if (currentNav && startNav && startNav > 0) {
-          currentVal += bahtCost * (currentNav / startNav);
+          const ratio = currentNav / startNav;
+          // Safety Guard: ป้องกันข้อมูล NAV ใน DB เพี้ยนข้ามสเกลจนติดลบ -48%
+          if (ratio >= 0.7 && ratio <= 1.3) {
+            currentVal += bahtCost * ratio;
+          } else {
+            currentVal += bahtCost;
+          }
         } else {
           currentVal += bahtCost;
         }
