@@ -117,10 +117,31 @@ async function getAllFundsMapping() {
 // ============================================================
 function matchFundForItem(fundList, item) {
   if (!fundList || fundList.length === 0) return null;
-  if (fundList.length === 1) return fundList[0]; // proj_id นี้มี class เดียว ไม่มีทางปนกัน
 
-  const itemClassUpper = (item.fund_class_name || '').trim().toUpperCase();
-  const itemClassNorm = normalizeCode(item.fund_class_name);
+  const itemClassRaw = (item.fund_class_name || '').trim();
+  const itemClassUpper = itemClassRaw.toUpperCase();
+  const itemClassNorm = normalizeCode(itemClassRaw);
+
+  if (fundList.length === 1) {
+    // ✅ แก้บั๊ก: เดิมเชื่อว่า "มีแถวเดียวในตาราง funds = ไม่มีทางปนกัน" ซึ่งผิด —
+    //    proj_id นี้อาจมีหลาย class จริงในฝั่ง ก.ล.ต. แค่ funds ของเราเก็บแค่ class เดียว
+    //    ต้องเช็ค fund_class_name ของ item เทียบกับที่เราคาดไว้ด้วยเสมอ ถ้ามีข้อมูลให้เทียบทั้ง 2 ฝั่ง
+    const only = fundList[0];
+    const expectedRaw = SPECIFIC_FUND_MAP[only.code] || only.fund_class_name;
+
+    if (!itemClassRaw || !expectedRaw) {
+      // ไม่มีข้อมูล class ให้เทียบเลยทั้ง 2 ฝั่ง (กองทุนแบบ single-class แท้ๆ ที่ ก.ล.ต. ไม่ติด tag class) → ยอมรับได้
+      return only;
+    }
+
+    const expectedUpper = expectedRaw.trim().toUpperCase();
+    const expectedNorm = normalizeCode(expectedRaw);
+    if (expectedUpper === itemClassUpper || expectedNorm === itemClassNorm) {
+      return only;
+    }
+    // มี class ทั้ง 2 ฝั่งแต่ไม่ตรงกัน → proj_id นี้มีมากกว่า 1 class จริง แต่ funds table เรามีแค่แถวเดียว ข้ามไปดีกว่าเดา
+    return null;
+  }
 
   // Step 1: จับคู่ตรงตัวด้วย fund_class_name จริง (ใช้ SPECIFIC_FUND_MAP แทนถ้ามี override)
   let matched = fundList.find((f) => {
@@ -161,7 +182,7 @@ async function updateAllNAV() {
   console.log(`\n2. ดึงข้อมูล NAV ล่าสุด (ตั้งแต่วันที่ ${startNavDate}) จาก SEC API...`);
 
   const navRecordsMap = new Map();
-  let skippedAmbiguous = 0;
+  const skippedDetails = new Map(); // proj_id -> { apiClassNames: Set, dbClassNames: Set, dbCodes: Set }
   let nextCursor = '';
   let pageNum = 1;
 
@@ -201,7 +222,17 @@ async function updateAllNAV() {
       // ✅ จุดที่แก้: จับคู่ตาม class จริง ไม่ใช่เอาตัวแรกที่เจอเหมือนเดิม
       const matchedFund = matchFundForItem(fundList, item);
       if (!matchedFund) {
-        if (fundList.length > 1) skippedAmbiguous++;
+        // เก็บรายละเอียดไว้บอกว่า proj_id นี้ API ส่ง class ชื่ออะไรมา เทียบกับที่เรามีในตาราง funds
+        // (บันทึกทุกกรณีที่ข้าม ไม่ใช่แค่ตอน fundList.length > 1 เหมือนเดิม — เคสแถวเดียวก็ข้ามได้แล้วตอนนี้)
+        if (!skippedDetails.has(projId)) {
+          skippedDetails.set(projId, { apiClassNames: new Set(), dbClassNames: new Set(), dbCodes: new Set() });
+        }
+        const detail = skippedDetails.get(projId);
+        if (item.fund_class_name) detail.apiClassNames.add(item.fund_class_name);
+        fundList.forEach((f) => {
+          detail.dbCodes.add(f.code);
+          detail.dbClassNames.add(SPECIFIC_FUND_MAP[f.code] || f.fund_class_name || '(ไม่มีค่า)');
+        });
         return;
       }
       const code = matchedFund.code;
@@ -232,8 +263,14 @@ async function updateAllNAV() {
 
   const navRecords = Array.from(navRecordsMap.values());
   console.log(`\nสรุป: รวบรวมข้อมูล NAV ได้รวม ${navRecords.length} รายการ`);
-  if (skippedAmbiguous > 0) {
-    console.log(`⚠️ ข้าม ${skippedAmbiguous} รายการที่เป็น proj_id หลาย class แต่หา class ที่ตรงไม่ได้ (เช็ค fund_class_name ในตาราง funds ให้ตรงกับ ก.ล.ต. เป๊ะๆ หรือเพิ่มใน SPECIFIC_FUND_MAP)`);
+  if (skippedDetails.size > 0) {
+    console.log(`\n⚠️ มี ${skippedDetails.size} โครงการ (proj_id) ที่ข้ามไปเพราะหา class ที่ตรงไม่เจอ รายละเอียด:`);
+    for (const [projId, detail] of skippedDetails.entries()) {
+      console.log(`  - proj_id ${projId}`);
+      console.log(`      โค้ดในตาราง funds: ${[...detail.dbCodes].join(', ')}`);
+      console.log(`      ค่าที่ใช้จับคู่อยู่ตอนนี้ (fund_class_name/SPECIFIC_FUND_MAP): ${[...detail.dbClassNames].join(' | ')}`);
+      console.log(`      ค่า fund_class_name จริงที่ API ส่งมา: ${[...detail.apiClassNames].join(' | ') || '(ไม่มีค่าในรายการที่ข้าม)'}`);
+    }
   }
 
   if (navRecords.length === 0) {
