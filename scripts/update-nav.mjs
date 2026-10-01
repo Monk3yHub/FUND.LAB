@@ -15,9 +15,63 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   realtime: { transport: ws },
 });
 
-// 1. ดึง mapping proj_id -> code ทั้งหมดจาก Supabase
+// ฟังก์ชันแปลงและล้างชื่อย่อ (ตัดอักขระพิเศษ และแปลง SCBNKY -> SCBNK) — ใช้เป็น fallback การจับคู่
+function normalizeCode(str) {
+  if (!str) return '';
+  let cleaned = str.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (cleaned.startsWith('SCBNKY')) {
+    cleaned = 'SCBNK' + cleaned.slice(6);
+  }
+  return cleaned;
+}
+
+// ✅ ตารางช่วยแปลง code ที่ไม่ตรงกับ fund_class_name จริงของ ก.ล.ต. ให้ตรงด้วยมือ
+const SPECIFIC_FUND_MAP = {
+  'ASP-VIET': 'ASP-VIET-A',
+  'ES-ASIA': 'ES-ASIA-A',
+  'ES-EG': 'ES-EG-A',
+  'ES-GAINCOME': 'ES-GAINCOME-A',
+  'KFHTECH': 'KFHTECH-A',
+  'KKP SEMICON-H FUND': 'KKP SEMICON-H',
+  'KT-Ashares': 'KT-Ashares-A',
+  'KT-ASIAG': 'KT-ASIAG-A',
+  'KT-ENERGY': 'KT-ENERGY-A',
+  'KT-FINANCE': 'KT-FINANCE-A',
+  'KTFIXPLUS': 'KTFIXPLUS-A',
+  'KT-HEALTHCARE': 'KT-HEALTHCARE-A',
+  'KT-JAPANALL': 'KT-JAPANALL-A',
+  'KT-JPFUND': 'KT-JPFUND-A',
+  'KT-NASDAQ': 'KT-NASDAQ-A',
+  'KT-PRECIOUS': 'KT-PRECIOUS-A',
+  'KT-S&P500': 'KT-S&P500-A',
+  'KT-SET50': 'KT-SET50-A',
+  'KT-TECHNOLOGY': 'KT-TECHNOLOGY-A',
+  'KT-US': 'KT-US-A',
+  'KTWC-ALPHA': 'KTWC-ALPHA-A',
+  'KTWC-GROWTH': 'KTWC-GROWTH-A',
+  'KTWC-INCOME': 'KTWC-INCOME-A',
+  'KTWC-MODERATE': 'KTWC-MODERATE-A',
+  'KT-WEQ': 'KT-WEQ-A',
+  'K-US500X': 'K-US500X-A(A)',
+  'K-USXNDQ': 'K-USXNDQ-A(A)',
+  'SCBCHAFUND': 'SCBCHAA',
+  'SCBGOLDFUND': 'SCBGOLD',
+  'SCBGOLDHFUND': 'SCBGOLDH',
+  'SCBIHEALTH': 'SCBIHEALTH(A)',
+  'SCBKEQTGFUND': 'SCBKEQTG',
+  'SCBNKY225': 'SCBNK225',
+  'SCBS&P500FUND': 'SCBS&P500',
+  'SCBSEMI': 'SCBSEMI(A)',
+  'TUSHEALTH': 'TUSHEALTH-A',
+  'UGSTAR-M': 'UGSTAR',
+};
+
+// ============================================================
+// ✅ แก้ใหม่: ดึง proj_id -> "รายการ fund ทั้งหมดที่ใช้ proj_id นี้" (ไม่ใช่ตัวเดียวแบบเดิม)
+//    เพราะ 1 proj_id อาจมีได้หลาย class/หลาย code ในตาราง funds
+// ============================================================
 async function getAllFundsMapping() {
-  const projIdToCodeMap = new Map();
+  const projIdMap = new Map(); // proj_id -> [{ code, fund_class_name }, ...]
   let page = 0;
   const pageSize = 1000;
   let hasMore = true;
@@ -25,7 +79,7 @@ async function getAllFundsMapping() {
   while (hasMore) {
     const { data, error } = await supabase
       .from('funds')
-      .select('code, proj_id')
+      .select('code, proj_id, fund_class_name')
       .not('proj_id', 'is', null)
       .range(page * pageSize, (page + 1) * pageSize - 1);
 
@@ -38,9 +92,13 @@ async function getAllFundsMapping() {
       hasMore = false;
     } else {
       data.forEach((f) => {
-        if (f.proj_id && f.code) {
-          projIdToCodeMap.set(f.proj_id.trim(), f.code.trim());
-        }
+        if (!f.proj_id || !f.code) return;
+        const projId = f.proj_id.trim();
+        if (!projIdMap.has(projId)) projIdMap.set(projId, []);
+        projIdMap.get(projId).push({
+          code: f.code.trim(),
+          fund_class_name: f.fund_class_name ? f.fund_class_name.trim() : null,
+        });
       });
       if (data.length < pageSize) {
         hasMore = false;
@@ -50,32 +108,64 @@ async function getAllFundsMapping() {
     }
   }
 
-  return projIdToCodeMap;
+  return projIdMap;
+}
+
+// ============================================================
+// ✅ แก้ใหม่: จับคู่ item ที่ได้จาก API กับ fund ที่ถูกต้องใน proj_id นั้น โดยใช้ fund_class_name จริง
+//    (ของเดิมแค่เจอ proj_id ตรงก็เอาเลย ไม่สนใจ class — นี่คือจุดที่ทำให้ NAV ปนกัน)
+// ============================================================
+function matchFundForItem(fundList, item) {
+  if (!fundList || fundList.length === 0) return null;
+  if (fundList.length === 1) return fundList[0]; // proj_id นี้มี class เดียว ไม่มีทางปนกัน
+
+  const itemClassUpper = (item.fund_class_name || '').trim().toUpperCase();
+  const itemClassNorm = normalizeCode(item.fund_class_name);
+
+  // Step 1: จับคู่ตรงตัวด้วย fund_class_name จริง (ใช้ SPECIFIC_FUND_MAP แทนถ้ามี override)
+  let matched = fundList.find((f) => {
+    const expected = (SPECIFIC_FUND_MAP[f.code] || f.fund_class_name || '').trim().toUpperCase();
+    return expected && itemClassUpper && expected === itemClassUpper;
+  });
+  if (matched) return matched;
+
+  // Step 2: จับคู่แบบ normalize กันสะกด/เว้นวรรค/ตัวเล็กใหญ่ไม่ตรงเป๊ะ
+  matched = fundList.find((f) => {
+    const expected = normalizeCode(SPECIFIC_FUND_MAP[f.code] || f.fund_class_name);
+    return expected && itemClassNorm && expected === itemClassNorm;
+  });
+  if (matched) return matched;
+
+  // หาไม่เจอจริงๆ (ไม่รู้ว่า item นี้เป็นของ class ไหนใน proj_id ที่มีหลาย class)
+  // ข้ามไปเลยดีกว่าเดา — เดาผิดจะทำให้ NAV ปนกันแบบที่เจอปัญหามาก่อน
+  return null;
 }
 
 async function updateAllNAV() {
   console.log('1. ดึงรายชื่อกองทุนทั้งหมดจาก Supabase...');
-  const projIdToCodeMap = await getAllFundsMapping();
-  console.log(`โหลดข้อมูลจับคู่สำเร็จทั้งหมด ${projIdToCodeMap.size} กองทุน`);
+  const projIdMap = await getAllFundsMapping();
+  const totalFundCount = [...projIdMap.values()].reduce((s, list) => s + list.length, 0);
+  console.log(`โหลดข้อมูลจับคู่สำเร็จ ${projIdMap.size} โครงการ (proj_id) รวม ${totalFundCount} กองทุน/class`);
 
-  if (projIdToCodeMap.size === 0) {
+  if (projIdMap.size === 0) {
     throw new Error('ไม่พบข้อมูลกองทุนในตาราง funds');
   }
 
   // คำนวณวันที่ย้อนหลัง 7 วันจากปัจจุบัน (ป้องกันติดวันหยุดเสาร์-อาทิตย์)
+  // ถ้าต้องการ backfill ช่วงอื่น ตั้ง env var RANGE_START ได้ (YYYY-MM-DD)
   const today = new Date();
   const pastSevenDays = new Date(today);
   pastSevenDays.setDate(today.getDate() - 7);
-  const startNavDate = pastSevenDays.toISOString().split('T')[0];
+  const startNavDate = process.env.RANGE_START?.trim() || pastSevenDays.toISOString().split('T')[0];
 
-  console.log(`\n2. ดึงข้อมูล NAV ล่าสุด (ย้อนหลังไม่เกิน 7 วัน ตั้งแต่วันที่ ${startNavDate}) จาก SEC API...`);
+  console.log(`\n2. ดึงข้อมูล NAV ล่าสุด (ตั้งแต่วันที่ ${startNavDate}) จาก SEC API...`);
 
   const navRecordsMap = new Map();
+  let skippedAmbiguous = 0;
   let nextCursor = '';
   let pageNum = 1;
 
   do {
-    // ดึงเฉพาะ 7 วันล่าสุด
     let url = `https://api.sec.or.th/v2/fund/daily-info/nav?page_size=100&start_nav_date=${startNavDate}`;
     if (nextCursor) {
       url += `&next_cursor=${encodeURIComponent(nextCursor)}`;
@@ -105,22 +195,29 @@ async function updateAllNAV() {
       const projId = (item.proj_id || item.proj_code || item.unique_id || '').trim();
       if (!projId) return;
 
-      const code = projIdToCodeMap.get(projId);
-      if (!code) return;
+      const fundList = projIdMap.get(projId);
+      if (!fundList) return;
+
+      // ✅ จุดที่แก้: จับคู่ตาม class จริง ไม่ใช่เอาตัวแรกที่เจอเหมือนเดิม
+      const matchedFund = matchFundForItem(fundList, item);
+      if (!matchedFund) {
+        if (fundList.length > 1) skippedAmbiguous++;
+        return;
+      }
+      const code = matchedFund.code;
 
       const navDate = item.nav_date || item.as_of_date || item.date;
       const navVal = parseFloat(item.last_val ?? item.net_asset_value ?? item.nav);
 
-      if (navDate && navDate >= startNavDate && !isNaN(navVal)) {
+      if (navDate && navDate >= startNavDate && !isNaN(navVal) && navVal > 0) {
         const key = `${code}_${navDate}`;
-        if (!navRecordsMap.has(key)) {
-          navRecordsMap.set(key, {
-            fund_code: code,
-            nav_date: navDate,
-            nav: navVal,
-          });
-          matchedInThisPage++;
-        }
+        // ไม่ต้องกัน "ตัวแรกชนะ" อีกแล้ว เพราะตอนนี้จับคู่ถูก class แน่นอนแล้ว ถ้าซ้ำคือข้อมูลเดียวกันจริง
+        navRecordsMap.set(key, {
+          fund_code: code,
+          nav_date: navDate,
+          nav: navVal,
+        });
+        matchedInThisPage++;
       }
     });
 
@@ -134,7 +231,10 @@ async function updateAllNAV() {
   } while (nextCursor);
 
   const navRecords = Array.from(navRecordsMap.values());
-  console.log(`\nสรุป: รวบรวมข้อมูล NAV ล่าสุดได้รวม ${navRecords.length} รายการ`);
+  console.log(`\nสรุป: รวบรวมข้อมูล NAV ได้รวม ${navRecords.length} รายการ`);
+  if (skippedAmbiguous > 0) {
+    console.log(`⚠️ ข้าม ${skippedAmbiguous} รายการที่เป็น proj_id หลาย class แต่หา class ที่ตรงไม่ได้ (เช็ค fund_class_name ในตาราง funds ให้ตรงกับ ก.ล.ต. เป๊ะๆ หรือเพิ่มใน SPECIFIC_FUND_MAP)`);
+  }
 
   if (navRecords.length === 0) {
     console.log('ไม่พบข้อมูล NAV ล่าสุดที่ต้องบันทึก');
