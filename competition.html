@@ -122,9 +122,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const CAPITAL = 1000000; 
 
-// 🎯 กำหนดวันหมดเขต และวันเริ่มตั้งต้นการแข่งขันสำหรับดึง NAV
+// 🎯 กำหนดวันหมดเขต / วันเริ่ม / วันสิ้นสุดการแข่งขัน
 const DEADLINE = new Date("2026-09-25T23:59:59+07:00");
-const START_DATE = "2026-09-25";
+const START_DATE = "2026-09-25";  // วันเริ่มนับผล — ถ้ากองไหนไม่มี NAV วันนี้ ใช้วันถัดไปที่มี (ดู getStartNavMap)
+const END_DATE   = "2026-10-30";  // วันสิ้นสุดนับผล — ถ้ากองไหนไม่มี NAV วันนี้ ใช้วันก่อนหน้าที่มี (ดู getAsOfNavMap)
 
 let lineUserId = null, nickname = "";
 let portfolio = {}; // fund_code -> pct
@@ -134,6 +135,53 @@ let chartInstance = null;
 
 function fmt(n){ return Math.round(n||0).toLocaleString('en-US'); }
 function pctFmt(n){ return (n >= 0 ? "+" : "") + (n||0).toFixed(2) + "%"; }
+
+// ============================================================
+// ✅ เพิ่มใหม่: หา "ราคาเริ่มนับผล" ของแต่ละกองทุน
+//    = NAV ที่ nav_date >= START_DATE เรียงจากวันเก่าสุดก่อน แล้วเอาตัวแรกที่เจอ
+//    (ถ้ากองทุนไม่มี NAV ตรงวัน START_DATE เป๊ะ จะได้ของวันถัดไปที่มีราคาจริงอัตโนมัติ)
+// ============================================================
+async function getStartNavMap(codes) {
+  if (!codes || codes.length === 0) return {};
+  const { data } = await supabase
+    .from('nav_history')
+    .select('fund_code, nav, nav_date')
+    .in('fund_code', codes)
+    .gte('nav_date', START_DATE)
+    .order('nav_date', { ascending: true });
+
+  const map = {};
+  (data || []).forEach(row => {
+    // เรียงจากเก่าสุดก่อน ตัวแรกที่เจอของแต่ละ fund_code คือวันแรกที่มีราคาตั้งแต่ START_DATE เป็นต้นไป
+    if (!(row.fund_code in map) && row.nav != null) map[row.fund_code] = Number(row.nav);
+  });
+  return map;
+}
+
+// ============================================================
+// ✅ เพิ่มใหม่: หา "ราคา ณ ปัจจุบัน/ราคาสิ้นสุดนับผล" ของแต่ละกองทุน
+//    ระหว่างแข่ง (วันนี้ < END_DATE) → ใช้ราคาล่าสุดที่มีจนถึงวันนี้ ให้อันดับขยับสดๆ
+//    พอถึง/เลย END_DATE แล้ว → ตรึงที่ NAV ที่ nav_date <= END_DATE (วันนั้นหรือก่อนหน้าที่มี) ไม่ขยับอีก
+// ============================================================
+async function getAsOfNavMap(codes) {
+  if (!codes || codes.length === 0) return {};
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const asOfDate = todayStr < END_DATE ? todayStr : END_DATE;
+
+  const { data } = await supabase
+    .from('nav_history')
+    .select('fund_code, nav, nav_date')
+    .in('fund_code', codes)
+    .lte('nav_date', asOfDate)
+    .order('nav_date', { ascending: false });
+
+  const map = {};
+  (data || []).forEach(row => {
+    // เรียงจากล่าสุดก่อน ตัวแรกที่เจอของแต่ละ fund_code คือวันล่าสุดที่มีราคา ไม่เกิน asOfDate
+    if (!(row.fund_code in map) && row.nav != null) map[row.fund_code] = Number(row.nav);
+  });
+  return map;
+}
 
 function checkDeadline() {
   const isExpired = new Date() > DEADLINE;
@@ -264,28 +312,12 @@ async function updateSummary(){
 
   if (codes.length > 0) {
     chartSection.style.display = 'block';
-    
-    // ดึงทั้ง NAV ล่าสุด และ NAV วันเริ่มแข่ง (25/9/2026)
-    const [{ data: navs }, { data: startNavs }] = await Promise.all([
-      supabase.from('latest_nav').select('*').in('fund_code', codes),
-      supabase.from('nav_history')
-        .select('*')
-        .gte('nav_date', START_DATE)
-        .lte('nav_date', `${START_DATE}T23:59:59`)
-        .in('fund_code', codes)
+
+    // ✅ ใช้ฟังก์ชันใหม่ที่มี fallback วันถัดไป/วันก่อนหน้า แทนการเจาะช่วงวันที่เดียวแบบเดิม
+    const [navMap, startNavMap] = await Promise.all([
+      getAsOfNavMap(codes),
+      getStartNavMap(codes),
     ]);
-
-    const navMap = {};
-    (navs || []).forEach(n => { 
-      const c = n.fund_code || n.code;
-      if (c && n.nav != null) navMap[c] = Number(n.nav);
-    });
-
-    const startNavMap = {};
-    (startNavs || []).forEach(n => { 
-      const c = n.fund_code || n.code;
-      if (c && n.nav != null) startNavMap[c] = Number(n.nav);
-    });
 
     const labels = [];
     const chartData = [];
@@ -420,29 +452,11 @@ async function loadLeaderboard(){
       return;
     }
 
-    // 2. ดึง NAV ล่าสุด และ NAV วันเริ่มแข่ง (25/9/2026) เฉพาะกองทุนที่มีคนเลือกจริง
-    const [{ data: navs }, { data: startNavs }] = await Promise.all([
-      supabase.from('latest_nav').select('*').in('fund_code', uniqueCodes),
-      supabase.from('nav_history')
-        .select('*')
-        .gte('nav_date', START_DATE)
-        .lte('nav_date', `${START_DATE}T23:59:59`)
-        .in('fund_code', uniqueCodes)
+    // ✅ ใช้ฟังก์ชันใหม่ที่มี fallback วันถัดไป/วันก่อนหน้า แทนการเจาะช่วงวันที่เดียวแบบเดิม
+    const [navMap, startNavMap] = await Promise.all([
+      getAsOfNavMap(uniqueCodes),
+      getStartNavMap(uniqueCodes),
     ]);
-
-    // สร้าง Map NAV ล่าสุด (รองรับฟิลด์ fund_code และ code)
-    const navMap = {};
-    (navs || []).forEach(n => {
-      const c = n.fund_code || n.code;
-      if (c && n.nav != null) navMap[c] = Number(n.nav);
-    });
-
-    // สร้าง Map NAV วันเริ่มแข่ง (รองรับฟิลด์ fund_code และ code)
-    const startNavMap = {};
-    (startNavs || []).forEach(n => {
-      const c = n.fund_code || n.code;
-      if (c && n.nav != null) startNavMap[c] = Number(n.nav);
-    });
 
     // 3. คำนวณผลตอบแทนของผู้เล่นแต่ละคน
     const rows = (allPlayers || []).map(p => {
